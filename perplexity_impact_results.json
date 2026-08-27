@@ -1,0 +1,98 @@
+{
+  "timestamp": "2026-08-25T23:22:31.196147+00:00",
+  "grid_zone": "QC",
+  "grid_intensity_gco2_kwh": 30.0,
+  "execution_mode": "dry_run",
+  "totals": {
+    "input_tokens": 106,
+    "output_tokens": 180,
+    "energy_wh": 0.7212,
+    "energy_kwh": 0.0007212,
+    "gwp_gco2eq": 0.027,
+    "gwp_kgco2eq": 2.7e-05,
+    "wcf_ml": 0.0109,
+    "wcf_l": 1.09e-05,
+    "pe_mj": 0.006491,
+    "adpe_kgsbeq": 1.09e-10
+  },
+  "results": [
+    {
+      "test_name": "Small",
+      "model": "llama-3.1-sonar-small-128k-online",
+      "prompt": "What is 2+2? Answer in one sentence.",
+      "max_tokens": 100,
+      "api_response": {
+        "input_tokens": 14,
+        "output_tokens": 60,
+        "cached_tokens": 0,
+        "latency_s": 0.05,
+        "simulated": true
+      },
+      "impacts": {
+        "energy_kwh": 6.42e-05,
+        "energy_wh": 0.0642,
+        "gwp_kgco2eq": 2.407e-06,
+        "gwp_gco2eq": 0.0024,
+        "wcf_l": 9.63e-07,
+        "wcf_ml": 0.001,
+        "pe_mj": 0.000578,
+        "adpe_kgsbeq": 1e-11,
+        "wh_per_token": 0.000868,
+        "gco2_per_token": 3.3e-05,
+        "tokens_per_wh": 934.58
+      }
+    },
+    {
+      "test_name": "Medium",
+      "model": "llama-3.1-sonar-large-128k-online",
+      "prompt": "Explain how a shell-and-tube heat exchanger works, including key thermal efficiency factors. Write 3 paragraphs.",
+      "max_tokens": 500,
+      "api_response": {
+        "input_tokens": 30,
+        "output_tokens": 60,
+        "cached_tokens": 0,
+        "latency_s": 0.05,
+        "simulated": true
+      },
+      "impacts": {
+        "energy_kwh": 0.000204,
+        "energy_wh": 0.204,
+        "gwp_kgco2eq": 7.65e-06,
+        "gwp_gco2eq": 0.0076,
+        "wcf_l": 3.06e-06,
+        "wcf_ml": 0.0031,
+        "pe_mj": 0.001836,
+        "adpe_kgsbeq": 3.1e-11,
+        "wh_per_token": 0.002267,
+        "gco2_per_token": 8.5e-05,
+        "tokens_per_wh": 294.12
+      }
+    },
+    {
+      "test_name": "Large",
+      "model": "llama-3.1-sonar-huge-128k-online",
+      "prompt": "Write a detailed technical analysis of AI inference energy consumption. Cover GPU power draw, PUE, datacenter cooling, and carbon intensity of electricity grids. Include quantitative estimates. Write at least 400 words.",
+      "max_tokens": 1000,
+      "api_response": {
+        "input_tokens": 62,
+        "output_tokens": 60,
+        "cached_tokens": 0,
+        "latency_s": 0.05,
+        "simulated": true
+      },
+      "impacts": {
+        "energy_kwh": 0.000453,
+        "energy_wh": 0.453,
+        "gwp_kgco2eq": 1.6987e-05,
+        "gwp_gco2eq": 0.017,
+        "wcf_l": 6.795e-06,
+        "wcf_ml": 0.0068,
+        "pe_mj": 0.004077,
+        "adpe_kgsbeq": 6.8e-11,
+        "wh_per_token": 0.003713,
+        "gco2_per_token": 0.000139,
+        "tokens_per_wh": 132.45
+      }
+    }
+  ]
+}
