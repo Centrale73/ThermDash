@@ -1,6 +1,7 @@
 """EcoLogits bridge: estimates energy, carbon, water, and material footprint from LLM usage."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +12,10 @@ ENERGY_RATES = {
     "claude-opus":          (0.0015, 0.0050),   # ~175B params
     "claude-sonnet":        (0.0010, 0.0030),   # ~70B params
     "claude-haiku":         (0.0005, 0.0015),   # ~20B params
+    "gpt-5":                (0.0012, 0.0040),
+    "gpt-4":                (0.0010, 0.0030),
+    "gemini-pro":           (0.0008, 0.0028),
+    "gemini-flash":         (0.0003, 0.0010),
     "sonar-small":          (0.0003, 0.0010),   # ~8B (Llama 3.1)
     "sonar-large":          (0.0008, 0.0030),   # ~70B
     "sonar-huge":           (0.0015, 0.0060),   # ~405B
@@ -45,7 +50,121 @@ _MODEL_ALIASES = {
     "claude-sonnet-4-7": "claude-3-5-sonnet",
     "claude-sonnet-4-20250514": "claude-3-5-sonnet",
     "claude-haiku-4": "claude-3-haiku",
+    "claude-5-opus": "claude-5-opus",
+    "claude-5-sonnet": "claude-5-sonnet",
+    "claude-5-haiku": "claude-5-haiku",
+    "gpt-5.6": "gpt-5.6",
+    "gpt-5": "gpt-5.6",
+    "gpt-4o": "gpt-4o",
+    "gemini-3.8-flash": "gemini-3.8-flash",
+    "gemini-3.7-flash": "gemini-3.7-flash",
+    "gemini-3.6-pro": "gemini-3.6-pro",
 }
+
+BENCHMARKS_JSON = Path(__file__).parent / "data" / "energy_benchmarks.json"
+_CACHED_BENCHMARKS = None
+
+
+def load_energy_benchmarks(path: Optional[Union[str, Path]] = None) -> dict:
+    """Load benchmark catalog containing prefill/decode energy signatures."""
+    global _CACHED_BENCHMARKS
+    if path is None and _CACHED_BENCHMARKS is not None:
+        return _CACHED_BENCHMARKS
+    p = Path(path) if path else BENCHMARKS_JSON
+    if p.is_file():
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if path is None:
+            _CACHED_BENCHMARKS = data
+        return data
+    return {"benchmarks": {}}
+
+
+@dataclass
+class EnergyResult:
+    energy_joules: float
+    energy_kwh: float
+    energy_method: str  # 'benchmark_lookup' | 'empirical_telemetry' | 'conservative_fallback'
+    benchmark_source: str
+    hardware_assumed: str
+    e_prefill_j: float
+    e_decode_j: float
+
+
+def calculate_energy(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    custom_hardware: Optional[str] = None,
+    benchmarks_path: Optional[Union[str, Path]] = None,
+) -> EnergyResult:
+    """Evaluates total Joules, converts to kWh (1 kWh = 3,600,000 Joules),
+
+    and returns a typed EnergyResult with citation metadata.
+    E_in = (N_in * e_prefill) + (N_out * e_decode)
+    """
+    catalog = load_energy_benchmarks(benchmarks_path).get("benchmarks", {})
+    m = (model or "").lower().strip()
+
+    entry = None
+    if m in catalog:
+        entry = catalog[m]
+    else:
+        mapped = _MODEL_ALIASES.get(m)
+        if mapped and mapped in catalog:
+            entry = catalog[mapped]
+        else:
+            for k in sorted(catalog.keys(), key=len, reverse=True):
+                if k != "default" and k in m:
+                    entry = catalog[k]
+                    break
+
+    if entry is None:
+        if "opus" in m and "claude-5-opus" in catalog:
+            entry = catalog["claude-5-opus"]
+        elif "sonnet" in m and "claude-3-5-sonnet" in catalog:
+            entry = catalog["claude-3-5-sonnet"]
+        elif "haiku" in m and "claude-3-haiku" in catalog:
+            entry = catalog["claude-3-haiku"]
+        elif "gemini" in m:
+            if "pro" in m and "gemini-3.6-pro" in catalog:
+                entry = catalog["gemini-3.6-pro"]
+            elif "flash" in m and "gemini-3.8-flash" in catalog:
+                entry = catalog["gemini-3.8-flash"]
+        elif "gpt-5" in m and "gpt-5.6" in catalog:
+            entry = catalog["gpt-5.6"]
+        elif "gpt-4" in m and "gpt-4o" in catalog:
+            entry = catalog["gpt-4o"]
+
+    if entry is None:
+        entry = catalog.get("default", {
+            "hardware": "NVIDIA A100-SXM4-80GB",
+            "j_per_token_prefill": 0.008,
+            "j_per_token_decode": 0.030,
+            "source": "Conservative fallback baseline (arXiv:2511.05597)",
+            "method": "conservative_fallback",
+        })
+
+    e_prefill = float(entry.get("j_per_token_prefill", 0.008))
+    e_decode = float(entry.get("j_per_token_decode", 0.030))
+    hardware = custom_hardware if custom_hardware else str(entry.get("hardware", "NVIDIA A100-SXM4-80GB"))
+    source = str(entry.get("source", "arXiv:2511.05597"))
+    method = str(entry.get("method", "benchmark_lookup"))
+
+    n_in = max(0, int(input_tokens or 0))
+    n_out = max(0, int(output_tokens or 0))
+
+    total_joules = (n_in * e_prefill) + (n_out * e_decode)
+    total_kwh = total_joules / 3_600_000.0
+
+    return EnergyResult(
+        energy_joules=round(total_joules, 6),
+        energy_kwh=round(total_kwh, 9),
+        energy_method=method,
+        benchmark_source=source,
+        hardware_assumed=hardware,
+        e_prefill_j=e_prefill,
+        e_decode_j=e_decode,
+    )
 
 
 @dataclass

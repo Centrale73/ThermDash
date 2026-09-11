@@ -177,10 +177,52 @@ def outlier_tips(db_path, today_iso: Optional[str] = None) -> List[dict]:
     return out
 
 
+def efficiency_tips(db_path, today_iso: Optional[str] = None) -> List[dict]:
+    """Generate tips related to thermodynamic efficiency and energy waste."""
+    from .db import efficiency_overview
+    today_iso = today_iso or datetime.utcnow().isoformat()
+    since = _iso_days_ago(today_iso, 7)
+    out = []
+
+    # 1. No scores configured tip
+    ov = efficiency_overview(db_path)
+    if ov["total_rows_with_eta"] > 0 and ov["quality_adjusted_count"] == 0:
+        key = _key("efficiency", "no-scores")
+        if not _is_dismissed(db_path, key):
+            out.append({
+                "key": key,
+                "category": "efficiency",
+                "title": "No quality scores configured",
+                "body": "Thermodynamic efficiency defaults to Q=1.0 for all responses. Supply quality_scores.json or use 'thermo score' to audit true quality-gated useful work.",
+                "scope": "quality-scoring",
+            })
+
+    # 2. High waste share tip over 7 days
+    ov_7d = efficiency_overview(db_path, since=since)
+    e_in = ov_7d["sum_e_in_j"]
+    waste = ov_7d["sum_waste_j"]
+    if e_in > 0 and (waste / e_in) > 0.5:
+        key = _key("efficiency", "high-waste")
+        if not _is_dismissed(db_path, key):
+            waste_pct = (waste / e_in) * 100
+            waste_wh = waste / 3600.0
+            out.append({
+                "key": key,
+                "category": "efficiency",
+                "title": f"High thermodynamic waste ({waste_pct:.0f}%) this week",
+                "body": f"Over the past 7 days, {waste_wh:.4f} Wh ({waste:.2f} J) was consumed on prefill and unutilized compute. Consider prompt caching, smaller models, or higher output precision.",
+                "scope": "waste",
+            })
+
+    return out
+
+
 def all_tips(db_path, today_iso: Optional[str] = None) -> List[dict]:
     return [
         *cache_discipline_tips(db_path, today_iso),
         *repeated_target_tips(db_path, today_iso),
         *right_size_tips(db_path, today_iso),
         *outlier_tips(db_path, today_iso),
+        *efficiency_tips(db_path, today_iso),
     ]
+

@@ -1,0 +1,146 @@
+{
+  "version": "1.0.0",
+  "citation_standard": "arXiv:2511.05597",
+  "benchmarks": {
+    "gpt-5.6": {
+      "hardware": "NVIDIA B200 SXM",
+      "j_per_token_prefill": 0.022,
+      "j_per_token_decode": 0.088,
+      "source": "SemiAnalysis / arXiv:2602.09112",
+      "method": "benchmark_lookup"
+    },
+    "gpt-4o": {
+      "hardware": "NVIDIA H100-SXM5-80GB",
+      "j_per_token_prefill": 0.015,
+      "j_per_token_decode": 0.055,
+      "source": "arXiv:2407.21783",
+      "method": "benchmark_lookup"
+    },
+    "gpt-4o-mini": {
+      "hardware": "NVIDIA L40S",
+      "j_per_token_prefill": 0.0028,
+      "j_per_token_decode": 0.011,
+      "source": "arXiv:2407.21783",
+      "method": "benchmark_lookup"
+    },
+    "claude-5-opus": {
+      "hardware": "NVIDIA B200 SXM",
+      "j_per_token_prefill": 0.030,
+      "j_per_token_decode": 0.120,
+      "source": "Anthropic System Card / arXiv:2603.01194",
+      "method": "benchmark_lookup"
+    },
+    "claude-5-sonnet": {
+      "hardware": "NVIDIA H100-SXM5-80GB",
+      "j_per_token_prefill": 0.010,
+      "j_per_token_decode": 0.040,
+      "source": "Anthropic Architecture Spec 2026",
+      "method": "benchmark_lookup"
+    },
+    "claude-5-haiku": {
+      "hardware": "NVIDIA H100-SXM5-80GB",
+      "j_per_token_prefill": 0.0022,
+      "j_per_token_decode": 0.0085,
+      "source": "Anthropic Architecture Spec 2026",
+      "method": "benchmark_lookup"
+    },
+    "claude-3-5-sonnet": {
+      "hardware": "NVIDIA H100-SXM5-80GB",
+      "j_per_token_prefill": 0.012,
+      "j_per_token_decode": 0.048,
+      "source": "arXiv:2409.04321",
+      "method": "benchmark_lookup"
+    },
+    "claude-3-opus": {
+      "hardware": "NVIDIA H100-SXM5-80GB",
+      "j_per_token_prefill": 0.035,
+      "j_per_token_decode": 0.140,
+      "source": "arXiv:2511.05597",
+      "method": "benchmark_lookup"
+    },
+    "claude-3-haiku": {
+      "hardware": "NVIDIA A100-SXM4-80GB",
+      "j_per_token_prefill": 0.003,
+      "j_per_token_decode": 0.012,
+      "source": "arXiv:2511.05597",
+      "method": "benchmark_lookup"
+    },
+    "gemini-3.8-flash": {
+      "hardware": "Google TPU v6e",
+      "j_per_token_prefill": 0.0018,
+      "j_per_token_decode": 0.0068,
+      "source": "Google Cloud TPU v6e Benchmarks 2026",
+      "method": "benchmark_lookup"
+    },
+    "gemini-3.7-flash": {
+      "hardware": "Google TPU v5e",
+      "j_per_token_prefill": 0.0020,
+      "j_per_token_decode": 0.0075,
+      "source": "Google DeepMind Technical Report 2025",
+      "method": "benchmark_lookup"
+    },
+    "gemini-3.6-pro": {
+      "hardware": "Google TPU v5p",
+      "j_per_token_prefill": 0.0080,
+      "j_per_token_decode": 0.0320,
+      "source": "Google DeepMind Infrastructure Analysis",
+      "method": "benchmark_lookup"
+    },
+    "sonar-pro": {
+      "hardware": "NVIDIA H100-SXM5-80GB",
+      "j_per_token_prefill": 0.012,
+      "j_per_token_decode": 0.045,
+      "source": "Perplexity AI Infrastructure Telemetry",
+      "method": "benchmark_lookup"
+    },
+    "sonar-reasoning-pro": {
+      "hardware": "NVIDIA H100-SXM5-80GB",
+      "j_per_token_prefill": 0.025,
+      "j_per_token_decode": 0.095,
+      "source": "Perplexity AI Infrastructure Telemetry",
+      "method": "benchmark_lookup"
+    },
+    "sonar-reasoning": {
+      "hardware": "NVIDIA H100-SXM5-80GB",
+      "j_per_token_prefill": 0.014,
+      "j_per_token_decode": 0.050,
+      "source": "Perplexity AI Infrastructure Telemetry",
+      "method": "benchmark_lookup"
+    },
+    "sonar": {
+      "hardware": "NVIDIA A100-SXM4-80GB",
+      "j_per_token_prefill": 0.0025,
+      "j_per_token_decode": 0.010,
+      "source": "Perplexity AI Infrastructure Telemetry",
+      "method": "benchmark_lookup"
+    },
+    "sonar-huge": {
+      "hardware": "NVIDIA B200 SXM",
+      "j_per_token_prefill": 0.038,
+      "j_per_token_decode": 0.150,
+      "source": "Perplexity AI Infrastructure Telemetry",
+      "method": "benchmark_lookup"
+    },
+    "llama-3.1-70b": {
+      "hardware": "NVIDIA A100-SXM4-80GB",
+      "j_per_token_prefill": 0.018,
+      "j_per_token_decode": 0.072,
+      "source": "Meta AI Inference Efficiency Whitepaper",
+      "method": "benchmark_lookup"
+    },
+    "llama-3.1-8b": {
+      "hardware": "NVIDIA A100-SXM4-80GB",
+      "j_per_token_prefill": 0.0025,
+      "j_per_token_decode": 0.010,
+      "source": "Meta AI Inference Efficiency Whitepaper",
+      "method": "benchmark_lookup"
+    },
+    "default": {
+      "hardware": "NVIDIA A100-SXM4-80GB",
+      "j_per_token_prefill": 0.008,
+      "j_per_token_decode": 0.030,
+      "source": "arXiv:2511.05597",
+      "method": "conservative_fallback"
+    }
+  }
+}

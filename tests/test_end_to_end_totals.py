@@ -127,6 +127,27 @@ class EndToEndTotalsTests(unittest.TestCase):
         self.assertEqual(assistant_uuids, ["a2", "a3", "a4"])
         self.assertEqual(tool_count, 1, "single tool_use row in fixture")
 
+        # Thermodynamic efficiency assertions
+        from token_dashboard.db import efficiency_overview
+        eff = efficiency_overview(self.db)
+        self.assertIsNone(eff["avg_eta_adjusted"])
+        self.assertIsNotNone(eff["avg_eta_unadjusted"])
+        self.assertGreater(eff["avg_eta_unadjusted"], 0.0)
+        self.assertLessEqual(eff["avg_eta_unadjusted"], 1.0)
+        self.assertEqual(eff["quality_adjusted_count"], 0)
+        self.assertEqual(eff["unadjusted_count"], 3)
+        self.assertGreater(eff["sum_e_in_j"], 0.0)
+        self.assertGreater(eff["sum_w_useful_j"], 0.0)
+        self.assertGreaterEqual(eff["sum_waste_j"], 0.0)
+        self.assertAlmostEqual(eff["sum_w_useful_j"] + eff["sum_waste_j"], eff["sum_e_in_j"], places=6)
+
+        with sqlite3.connect(self.db) as c:
+            for row in c.execute("SELECT eta, w_useful_j, waste_j, quality_adjusted FROM messages WHERE type='assistant'"):
+                self.assertIsNotNone(row[0])
+                self.assertGreater(row[1], 0)
+                self.assertGreaterEqual(row[2], 0)
+                self.assertEqual(row[3], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,12 @@
+{
+  "efficiency": {
+    "avg_eta_adjusted": null,
+    "avg_eta_unadjusted": 0.847,
+    "quality_adjusted_count": 0,
+    "unadjusted_count": 3,
+    "mix_ratio": 0.0,
+    "sum_e_in_j": 0.00219,
+    "sum_w_useful_j": 0.001855,
+    "sum_waste_j": 0.000335
+  }
+}

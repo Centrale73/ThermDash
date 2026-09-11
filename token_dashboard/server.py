@@ -7,6 +7,7 @@ import mimetypes
 import queue
 import threading
 import time
+from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -15,12 +16,20 @@ from .db import (
     tool_token_breakdown, recent_sessions, session_turns,
     daily_token_breakdown, model_breakdown, skill_breakdown,
     impact_totals, daily_impacts, model_impact_breakdown,
+    get_audit_summary, get_audit_waste_events, get_audit_runs,
+    insert_audit_run, insert_audit_event,
+    efficiency_overview, efficiency_by_model, efficiency_sessions, efficiency_by_day,
+    connect,
 )
 from .pricing import load_pricing, cost_for, get_plan, set_plan
 from .tips import all_tips, dismiss_tip
 from .scanner import scan_dir
 from .skills import cached_catalog
-from .ecologits_bridge import is_ecologits_available, get_grid_intensity
+from .ecologits_bridge import is_ecologits_available, get_grid_intensity, calculate_energy
+from .energy_table import lookup
+from .quality_scores import QualityScore, composite_q
+from .heat import calculate_heat_dollars
+from .delta_heat import compute_cost_and_thermal_delta
 from .chat import handle_chat_request, get_configured_keys, test_api_key
 
 
@@ -160,6 +169,40 @@ def build_handler(db_path: str, projects_dir: str):
                 return _send_json(self, {"plan": get_plan(db_path), "pricing": pricing})
             if path == "/api/keys/status":
                 return _send_json(self, get_configured_keys())
+            if path == "/api/audit/summary":
+                return _send_json(self, get_audit_summary(db_path, since=since, until=until))
+            if path == "/api/audit/waste-events":
+                run_id = qs.get("run_id", [None])[0]
+                rule_id = qs.get("rule_id", [None])[0]
+                event_type = qs.get("event_type", [None])[0]
+                limit = _clamp_limit(qs.get("limit", ["50"])[0], 50)
+                return _send_json(self, get_audit_waste_events(
+                    db_path, run_id=run_id, rule_id=rule_id, event_type=event_type, limit=limit
+                ))
+            if path == "/api/audit/runs":
+                sid = qs.get("session_id", [None])[0]
+                limit = _clamp_limit(qs.get("limit", ["50"])[0], 50)
+                return _send_json(self, get_audit_runs(db_path, session_id=sid, limit=limit, since=since, until=until))
+            if path == "/api/efficiency/overview":
+                return _send_json(self, efficiency_overview(db_path, since=since, until=until))
+            if path == "/api/efficiency/by_model":
+                rows = efficiency_by_model(db_path, since=since, until=until)
+                for r in rows:
+                    try:
+                        c = lookup(r["model"])
+                        r["energy_source"] = c.source
+                        r["energy_measured"] = c.measured
+                        r["gpu"] = c.gpu
+                    except Exception:
+                        r["energy_source"] = ""
+                        r["energy_measured"] = False
+                        r["gpu"] = ""
+                return _send_json(self, rows)
+            if path == "/api/efficiency/sessions":
+                limit = _clamp_limit(qs.get("limit", ["20"])[0], 20)
+                return _send_json(self, efficiency_sessions(db_path, limit=limit, since=since, until=until))
+            if path == "/api/efficiency/by_day":
+                return _send_json(self, efficiency_by_day(db_path, since=since, until=until))
             if path == "/api/scan":
                 n = scan_dir(projects_dir, db_path)
                 return _send_json(self, n)
@@ -197,6 +240,40 @@ def build_handler(db_path: str, projects_dir: str):
                 return _send_error(self, 400, "invalid JSON")
             if not isinstance(body, dict):
                 return _send_error(self, 400, "body must be a JSON object")
+            if url.path == "/api/quality_scores":
+                msg_id = body.get("message_id")
+                if not msg_id or not isinstance(msg_id, str):
+                    return _send_error(self, 400, "message_id is required")
+                sess_id = body.get("session_id", "")
+                try:
+                    alpha = float(body.get("alpha"))
+                    rho = float(body.get("rho"))
+                except (TypeError, ValueError):
+                    return _send_error(self, 400, "alpha and rho must be numbers in [0, 1]")
+                if not (0.0 <= alpha <= 1.0) or not (0.0 <= rho <= 1.0):
+                    return _send_error(self, 400, "alpha and rho must be between 0.0 and 1.0")
+                method = str(body.get("method", "unknown"))
+                try:
+                    w_a = float(body.get("w_a", 0.5))
+                    w_p = float(body.get("w_p", 0.5))
+                except (TypeError, ValueError):
+                    w_a, w_p = 0.5, 0.5
+
+                qs_obj = QualityScore(alpha=alpha, rho=rho, method=method, w_a=w_a, w_p=w_p)
+                q_val = composite_q(qs_obj)
+
+                with connect(db_path) as conn:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO quality_scores
+                        (message_id, session_id, alpha, rho, method, w_a, w_p, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (msg_id, sess_id, alpha, rho, method, w_a, w_p, time.time()),
+                    )
+                    conn.commit()
+
+                return _send_json(self, {"ok": True, "q": q_val}, status=201)
             if url.path == "/api/plan":
                 set_plan(db_path, body.get("plan", "api"))
                 return _send_json(self, {"ok": True})
@@ -215,6 +292,93 @@ def build_handler(db_path: str, projects_dir: str):
                     api_key = body.get("api_key", "")
                     res = test_api_key(provider, api_key)
                     return _send_json(self, res)
+                except Exception as e:
+                    return _send_error(self, 500, str(e))
+            if url.path == "/api/audit/ingest":
+                try:
+                    run_data = body.copy()
+                    model_name = run_data.get("model") or "claude-3-5-sonnet"
+                    inp_tok = int(run_data.get("input_tokens") or 0)
+                    out_tok = int(run_data.get("output_tokens") or 0)
+                    useful_in = int(run_data.get("useful_in", inp_tok))
+                    useful_out = int(run_data.get("useful_out", out_tok))
+                    p_in = run_data.get("price_per_1k_in")
+                    p_out = run_data.get("price_per_1k_out")
+                    region = run_data.get("region_key", "quebec_commercial_hydro")
+                    custom_hw = run_data.get("custom_hardware")
+                    override_pue = run_data.get("override_pue")
+                    override_rate = run_data.get("override_rate")
+
+                    energy_res = calculate_energy(
+                        model=model_name,
+                        input_tokens=inp_tok,
+                        output_tokens=out_tok,
+                        custom_hardware=custom_hw,
+                    )
+                    heat_res = calculate_heat_dollars(
+                        energy_kwh=energy_res.energy_kwh,
+                        region_key=region,
+                        override_pue=override_pue,
+                        override_rate=override_rate,
+                    )
+                    delta_res = compute_cost_and_thermal_delta(
+                        model=model_name,
+                        total_in=inp_tok,
+                        total_out=out_tok,
+                        useful_in=useful_in,
+                        useful_out=useful_out,
+                        price_per_1k_in=p_in,
+                        price_per_1k_out=p_out,
+                        region_key=region,
+                        custom_hardware=custom_hw,
+                        override_pue=override_pue,
+                        override_rate=override_rate,
+                    )
+
+                    child_events = run_data.get("waste_events") or []
+                    is_waste = 1 if (delta_res.cost_wasted_usd > 0 or child_events or run_data.get("is_waste")) else 0
+
+                    record = {
+                        "run_id":                 run_data.get("run_id"),
+                        "session_id":             run_data.get("session_id") or "",
+                        "client_id":              run_data.get("client_id") or "",
+                        "timestamp":              run_data.get("timestamp"),
+                        "model":                  model_name,
+                        "input_tokens":           inp_tok,
+                        "output_tokens":          out_tok,
+                        "cost_usd":               delta_res.cost_billed_usd,
+                        "energy_kwh":             energy_res.energy_kwh,
+                        "energy_joules":          energy_res.energy_joules,
+                        "energy_method":          energy_res.energy_method,
+                        "benchmark_source":       energy_res.benchmark_source,
+                        "hardware_assumed":       energy_res.hardware_assumed,
+                        "heat_dollars":           heat_res.heat_dollars,
+                        "is_waste":               is_waste,
+                        "waste_cost_usd":         delta_res.cost_wasted_usd,
+                        "waste_energy_kwh":       delta_res.energy_wasted_kwh,
+                        "cost_billed_usd":        delta_res.cost_billed_usd,
+                        "cost_useful_usd":        delta_res.cost_useful_usd,
+                        "cost_delta_usd":         delta_res.cost_wasted_usd,
+                        "thermal_waste_joules":   delta_res.energy_wasted_joules,
+                        "thermal_waste_kwh":      delta_res.energy_wasted_kwh,
+                        "thermal_waste_heat_usd": delta_res.heat_dollars_wasted,
+                    }
+                    persisted_run_id = insert_audit_run(db_path, record)
+
+                    persisted_event_ids = []
+                    for ev in child_events:
+                        ev_dict = dict(ev)
+                        ev_dict["run_id"] = persisted_run_id
+                        persisted_event_ids.append(insert_audit_event(db_path, ev_dict))
+
+                    return _send_json(self, {
+                        "ok": True,
+                        "run_id": persisted_run_id,
+                        "event_ids": persisted_event_ids,
+                        "delta": asdict(delta_res),
+                        "energy": asdict(energy_res),
+                        "heat": asdict(heat_res),
+                    }, status=201)
                 except Exception as e:
                     return _send_error(self, 500, str(e))
             self.send_response(404)

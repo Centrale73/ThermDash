@@ -27,3 +27,11 @@ The first `python3 cli.py scan` on a heavy user's machine can read tens of MB ac
 ## Running two dashboards against the same DB
 
 Both will fight over the SQLite file and you'll see inconsistent numbers and occasional `database is locked` errors. Only run one at a time. If you want to view the dashboard from a second device, use `HOST=0.0.0.0` on the one running machine and point the second device's browser at it.
+
+## Thermodynamic Efficiency Engine
+
+- **Model-GPU pair estimates:** Energy constants in `energy.json` are estimates drawn from published papers (all currently marked `measured: false`). Actual physical energy consumption per token varies across specific hardware configurations, quantization levels, batch sizes, and data center thermal conditions.
+- **Quality-gating defaults to Q = 1.0:** In the simplified v1 setup without scoring data, all assistant responses default to $Q = 1.0$ and are flagged with `quality_adjusted: false`. Quality-adjusted efficiency $\eta$ is only calculated when real scoring data ($\alpha$ and $\rho$ in $[0, 1]$) is supplied via `quality_scores.json` or `POST /api/quality_scores` / `cli.py thermo score`.
+- **Strict aggregate separation:** To preserve audit integrity, quality-adjusted $\eta$ and non-adjusted $\eta$ are never silently averaged together into a single blended metric. They are tracked and reported as separate values alongside a mix ratio.
+- **Automatic backfill & rescans:** Upgrading an existing database backfills efficiency data for pre-existing assistant rows. If quality scores are added later, re-running `cli.py scan --recompute` or `cli.py thermo report --recompute` updates the records.
+

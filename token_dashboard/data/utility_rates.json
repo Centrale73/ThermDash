@@ -1,0 +1,34 @@
+{
+  "version": "1.0.0",
+  "default_region": "quebec_commercial_hydro",
+  "profiles": {
+    "quebec_commercial_hydro": {
+      "name": "Hydro-Québec Commercial",
+      "pue": 1.15,
+      "rate_usd_per_kwh": 0.055,
+      "g_co2_per_kwh": 1.7,
+      "description": "Hydro-Québec commercial hydro rate, PUE 1.15, 1.7 g CO2/kWh"
+    },
+    "us_east_virginia": {
+      "name": "US East (Northern Virginia)",
+      "pue": 1.25,
+      "rate_usd_per_kwh": 0.085,
+      "g_co2_per_kwh": 380.0,
+      "description": "US Virginia datacenter alley grid, PUE 1.25, 380.0 g CO2/kWh"
+    },
+    "us_west_california": {
+      "name": "US West (California)",
+      "pue": 1.20,
+      "rate_usd_per_kwh": 0.165,
+      "g_co2_per_kwh": 210.0,
+      "description": "California datacenter grid, PUE 1.20, 210.0 g CO2/kWh"
+    },
+    "global_baseline": {
+      "name": "Global Baseline Average",
+      "pue": 1.30,
+      "rate_usd_per_kwh": 0.120,
+      "g_co2_per_kwh": 475.0,
+      "description": "Global datacenter baseline average, PUE 1.30, 475.0 g CO2/kWh"
+    }
+  }
+}

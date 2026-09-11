@@ -46,13 +46,33 @@ CREATE TABLE IF NOT EXISTS messages (
   wcf_l                   REAL NOT NULL DEFAULT 0,
   adpe_kgsbeq             REAL NOT NULL DEFAULT 0,
   pe_mj                   REAL NOT NULL DEFAULT 0,
-  impact_source           TEXT NOT NULL DEFAULT ''
+  impact_source           TEXT NOT NULL DEFAULT '',
+  e_in_j                  REAL,
+  e_out_j                 REAL,
+  w_useful_j              REAL,
+  waste_j                 REAL,
+  q_alpha                 REAL,
+  q_rho                   REAL,
+  quality_adjusted        INTEGER NOT NULL DEFAULT 0,
+  eta                     REAL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_session   ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_project   ON messages(project_slug);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_model     ON messages(model);
 CREATE INDEX IF NOT EXISTS idx_messages_msgid     ON messages(session_id, message_id);
+
+CREATE TABLE IF NOT EXISTS quality_scores (
+  message_id  TEXT PRIMARY KEY,
+  session_id  TEXT,
+  alpha       REAL NOT NULL,
+  rho         REAL NOT NULL,
+  method      TEXT NOT NULL DEFAULT 'unknown',
+  w_a         REAL NOT NULL DEFAULT 0.5,
+  w_p         REAL NOT NULL DEFAULT 0.5,
+  created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_qs_session ON quality_scores(session_id);
 
 CREATE TABLE IF NOT EXISTS tool_calls (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,6 +98,51 @@ CREATE TABLE IF NOT EXISTS dismissed_tips (
   tip_key       TEXT PRIMARY KEY,
   dismissed_at  REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS audit_runs (
+  run_id                 TEXT PRIMARY KEY,
+  session_id             TEXT,
+  client_id              TEXT,
+  timestamp              TEXT NOT NULL,
+  model                  TEXT,
+  input_tokens           INTEGER NOT NULL DEFAULT 0,
+  output_tokens          INTEGER NOT NULL DEFAULT 0,
+  cost_usd               REAL NOT NULL DEFAULT 0.0,
+  energy_kwh             REAL NOT NULL DEFAULT 0.0,
+  energy_joules          REAL NOT NULL DEFAULT 0.0,
+  energy_method          TEXT NOT NULL DEFAULT 'conservative_fallback',
+  benchmark_source       TEXT DEFAULT '',
+  hardware_assumed       TEXT DEFAULT '',
+  heat_dollars           REAL NOT NULL DEFAULT 0.0,
+  is_waste               INTEGER NOT NULL DEFAULT 0,
+  waste_cost_usd         REAL NOT NULL DEFAULT 0.0,
+  waste_energy_kwh       REAL NOT NULL DEFAULT 0.0,
+  cost_billed_usd        REAL NOT NULL DEFAULT 0.0,
+  cost_useful_usd        REAL NOT NULL DEFAULT 0.0,
+  cost_delta_usd         REAL NOT NULL DEFAULT 0.0,
+  thermal_waste_joules   REAL NOT NULL DEFAULT 0.0,
+  thermal_waste_kwh      REAL NOT NULL DEFAULT 0.0,
+  thermal_waste_heat_usd REAL NOT NULL DEFAULT 0.0
+);
+CREATE INDEX IF NOT EXISTS idx_audit_runs_session   ON audit_runs(session_id);
+CREATE INDEX IF NOT EXISTS idx_audit_runs_timestamp ON audit_runs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_runs_waste     ON audit_runs(is_waste);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+  event_id               TEXT PRIMARY KEY,
+  run_id                 TEXT NOT NULL,
+  event_type             TEXT NOT NULL,
+  tokens_wasted          INTEGER NOT NULL DEFAULT 0,
+  cost_wasted_usd        REAL NOT NULL DEFAULT 0.0,
+  energy_wasted_kwh      REAL NOT NULL DEFAULT 0.0,
+  heat_wasted_dollars    REAL NOT NULL DEFAULT 0.0,
+  rule_id                TEXT NOT NULL,
+  details                TEXT DEFAULT '',
+  FOREIGN KEY (run_id) REFERENCES audit_runs(run_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_audit_events_run  ON audit_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_rule ON audit_events(rule_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_type ON audit_events(event_type);
 """
 
 
@@ -91,7 +156,61 @@ def init_db(path: Union[str, Path]) -> None:
     with sqlite3.connect(path) as c:
         _migrate_add_message_id(c)
         _migrate_impact_columns(c)
+        _migrate_efficiency_columns(c)
+        _migrate_audit_tables(c)
         c.executescript(SCHEMA)
+        try:
+            from .quality_scores import QualityScoreLoader
+            loader = QualityScoreLoader(db_path=path)
+            backfill_efficiency(c, loader)
+        except Exception:
+            pass
+
+
+def _migrate_efficiency_columns(conn) -> None:
+    """Add thermodynamic efficiency columns if they do not exist."""
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'"
+    ).fetchone()
+    if not has_table:
+        return
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+    new_columns = [
+        ("e_in_j", "REAL"),
+        ("e_out_j", "REAL"),
+        ("w_useful_j", "REAL"),
+        ("waste_j", "REAL"),
+        ("q_alpha", "REAL"),
+        ("q_rho", "REAL"),
+        ("quality_adjusted", "INTEGER NOT NULL DEFAULT 0"),
+        ("eta", "REAL"),
+    ]
+    for col_name, col_type in new_columns:
+        if col_name not in cols:
+            conn.execute(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}")
+    conn.commit()
+
+
+def _migrate_audit_tables(conn) -> None:
+    """Ensure all required columns exist in audit_runs and audit_events."""
+    has_runs = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_runs'"
+    ).fetchone()
+    if has_runs:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(audit_runs)")}
+        run_cols = [
+            ("model", "TEXT DEFAULT ''"),
+            ("cost_billed_usd", "REAL DEFAULT 0.0"),
+            ("cost_useful_usd", "REAL DEFAULT 0.0"),
+            ("cost_delta_usd", "REAL DEFAULT 0.0"),
+            ("thermal_waste_joules", "REAL DEFAULT 0.0"),
+            ("thermal_waste_kwh", "REAL DEFAULT 0.0"),
+            ("thermal_waste_heat_usd", "REAL DEFAULT 0.0"),
+        ]
+        for col_name, col_type in run_cols:
+            if col_name not in cols:
+                conn.execute(f"ALTER TABLE audit_runs ADD COLUMN {col_name} {col_type}")
+    conn.commit()
 
 
 def _migrate_impact_columns(conn) -> None:
@@ -507,4 +626,482 @@ def model_impact_breakdown(db_path: Union[str, Path], since=None, until=None) ->
                 "cache_create_tokens": int(d["cache_create_tokens"]),
             })
         return rows
+
+
+def insert_audit_run(db_path: Union[str, Path], run: dict) -> str:
+    """Insert or update a record in audit_runs and return run_id."""
+    import uuid
+    from datetime import datetime, timezone
+
+    run_id = str(run.get("run_id") or uuid.uuid4())
+    ts = run.get("timestamp") or datetime.now(timezone.utc).isoformat()
+    sql = """
+      INSERT OR REPLACE INTO audit_runs (
+        run_id, session_id, client_id, timestamp, model,
+        input_tokens, output_tokens, cost_usd,
+        energy_kwh, energy_joules, energy_method,
+        benchmark_source, hardware_assumed, heat_dollars,
+        is_waste, waste_cost_usd, waste_energy_kwh,
+        cost_billed_usd, cost_useful_usd, cost_delta_usd,
+        thermal_waste_joules, thermal_waste_kwh, thermal_waste_heat_usd
+      ) VALUES (
+        :run_id, :session_id, :client_id, :timestamp, :model,
+        :input_tokens, :output_tokens, :cost_usd,
+        :energy_kwh, :energy_joules, :energy_method,
+        :benchmark_source, :hardware_assumed, :heat_dollars,
+        :is_waste, :waste_cost_usd, :waste_energy_kwh,
+        :cost_billed_usd, :cost_useful_usd, :cost_delta_usd,
+        :thermal_waste_joules, :thermal_waste_kwh, :thermal_waste_heat_usd
+      )
+    """
+    params = {
+        "run_id":                 run_id,
+        "session_id":             run.get("session_id") or "",
+        "client_id":              run.get("client_id") or "",
+        "timestamp":              ts,
+        "model":                  run.get("model") or "",
+        "input_tokens":           int(run.get("input_tokens") or 0),
+        "output_tokens":          int(run.get("output_tokens") or 0),
+        "cost_usd":               float(run.get("cost_usd") or 0.0),
+        "energy_kwh":             float(run.get("energy_kwh") or 0.0),
+        "energy_joules":          float(run.get("energy_joules") or 0.0),
+        "energy_method":          str(run.get("energy_method") or "conservative_fallback"),
+        "benchmark_source":       str(run.get("benchmark_source") or ""),
+        "hardware_assumed":       str(run.get("hardware_assumed") or ""),
+        "heat_dollars":           float(run.get("heat_dollars") or 0.0),
+        "is_waste":               1 if run.get("is_waste") else 0,
+        "waste_cost_usd":         float(run.get("waste_cost_usd") or 0.0),
+        "waste_energy_kwh":       float(run.get("waste_energy_kwh") or 0.0),
+        "cost_billed_usd":        float(run.get("cost_billed_usd") or 0.0),
+        "cost_useful_usd":        float(run.get("cost_useful_usd") or 0.0),
+        "cost_delta_usd":         float(run.get("cost_delta_usd") or 0.0),
+        "thermal_waste_joules":   float(run.get("thermal_waste_joules") or 0.0),
+        "thermal_waste_kwh":      float(run.get("thermal_waste_kwh") or 0.0),
+        "thermal_waste_heat_usd": float(run.get("thermal_waste_heat_usd") or 0.0),
+    }
+    with connect(db_path) as c:
+        c.execute(sql, params)
+        c.commit()
+    return run_id
+
+
+def insert_audit_event(db_path: Union[str, Path], event: dict) -> str:
+    """Insert a record into audit_events and return event_id."""
+    import uuid
+
+    event_id = str(event.get("event_id") or uuid.uuid4())
+    sql = """
+      INSERT OR REPLACE INTO audit_events (
+        event_id, run_id, event_type, tokens_wasted,
+        cost_wasted_usd, energy_wasted_kwh, heat_wasted_dollars,
+        rule_id, details
+      ) VALUES (
+        :event_id, :run_id, :event_type, :tokens_wasted,
+        :cost_wasted_usd, :energy_wasted_kwh, :heat_wasted_dollars,
+        :rule_id, :details
+      )
+    """
+    params = {
+        "event_id":            event_id,
+        "run_id":              str(event.get("run_id") or ""),
+        "event_type":          str(event.get("event_type") or "other"),
+        "tokens_wasted":       int(event.get("tokens_wasted") or 0),
+        "cost_wasted_usd":     float(event.get("cost_wasted_usd") or 0.0),
+        "energy_wasted_kwh":   float(event.get("energy_wasted_kwh") or 0.0),
+        "heat_wasted_dollars": float(event.get("heat_wasted_dollars") or 0.0),
+        "rule_id":             str(event.get("rule_id") or ""),
+        "details":             str(event.get("details") or ""),
+    }
+    with connect(db_path) as c:
+        c.execute(sql, params)
+        c.commit()
+    return event_id
+
+
+def get_audit_summary(db_path: Union[str, Path], since: Optional[str] = None, until: Optional[str] = None) -> dict:
+    """Aggregated metrics across audit runs."""
+    rng, args = _range_clause(since, until)
+    sql = f"""
+      SELECT COUNT(*)                                AS total_runs,
+             COALESCE(SUM(input_tokens), 0)          AS total_input_tokens,
+             COALESCE(SUM(output_tokens), 0)         AS total_output_tokens,
+             COALESCE(SUM(cost_usd), 0.0)            AS total_cost_usd,
+             COALESCE(SUM(energy_kwh), 0.0)          AS total_energy_kwh,
+             COALESCE(SUM(energy_joules), 0.0)       AS total_energy_joules,
+             COALESCE(SUM(heat_dollars), 0.0)        AS total_heat_dollars,
+             COALESCE(SUM(CASE WHEN is_waste=1 THEN 1 ELSE 0 END), 0) AS waste_runs_count,
+             COALESCE(SUM(waste_cost_usd), 0.0)      AS total_waste_cost_usd,
+             COALESCE(SUM(waste_energy_kwh), 0.0)    AS total_waste_energy_kwh,
+             COALESCE(SUM(cost_billed_usd), 0.0)     AS total_cost_billed_usd,
+             COALESCE(SUM(cost_useful_usd), 0.0)     AS total_cost_useful_usd,
+             COALESCE(SUM(cost_delta_usd), 0.0)      AS total_cost_delta_usd,
+             COALESCE(SUM(thermal_waste_joules), 0.0)AS total_thermal_waste_joules,
+             COALESCE(SUM(thermal_waste_kwh), 0.0)   AS total_thermal_waste_kwh,
+             COALESCE(SUM(thermal_waste_heat_usd), 0.0) AS total_thermal_waste_heat_usd
+        FROM audit_runs
+       WHERE 1=1 {rng}
+    """
+    with connect(db_path) as c:
+        row = dict(c.execute(sql, args).fetchone() or {})
+        billed = float(row.get("total_cost_billed_usd") or 0.0)
+        useful = float(row.get("total_cost_useful_usd") or 0.0)
+        ratio = round(useful / billed, 4) if billed > 0 else 1.0
+
+        # Energy method breakdown
+        methods_sql = f"""
+          SELECT energy_method, COUNT(*) as runs, COALESCE(SUM(energy_kwh), 0.0) as energy_kwh
+            FROM audit_runs WHERE 1=1 {rng}
+           GROUP BY energy_method
+        """
+        by_method = [dict(r) for r in c.execute(methods_sql, args)]
+
+        # Hardware assumed breakdown
+        hw_sql = f"""
+          SELECT hardware_assumed, COUNT(*) as runs, COALESCE(SUM(energy_kwh), 0.0) as energy_kwh
+            FROM audit_runs WHERE 1=1 {rng}
+           GROUP BY hardware_assumed
+        """
+        by_hardware = [dict(r) for r in c.execute(hw_sql, args)]
+
+    return {
+        "total_runs":                 int(row.get("total_runs") or 0),
+        "total_input_tokens":         int(row.get("total_input_tokens") or 0),
+        "total_output_tokens":        int(row.get("total_output_tokens") or 0),
+        "total_cost_usd":             round(float(row.get("total_cost_usd") or 0.0), 6),
+        "total_energy_kwh":           round(float(row.get("total_energy_kwh") or 0.0), 6),
+        "total_energy_joules":        round(float(row.get("total_energy_joules") or 0.0), 4),
+        "total_heat_dollars":         round(float(row.get("total_heat_dollars") or 0.0), 6),
+        "waste_runs_count":           int(row.get("waste_runs_count") or 0),
+        "total_waste_cost_usd":       round(float(row.get("total_waste_cost_usd") or 0.0), 6),
+        "total_waste_energy_kwh":     round(float(row.get("total_waste_energy_kwh") or 0.0), 6),
+        "total_cost_billed_usd":      round(billed, 6),
+        "total_cost_useful_usd":      round(useful, 6),
+        "total_cost_delta_usd":       round(float(row.get("total_cost_delta_usd") or 0.0), 6),
+        "total_thermal_waste_joules": round(float(row.get("total_thermal_waste_joules") or 0.0), 4),
+        "total_thermal_waste_kwh":    round(float(row.get("total_thermal_waste_kwh") or 0.0), 6),
+        "total_thermal_waste_heat_usd": round(float(row.get("total_thermal_waste_heat_usd") or 0.0), 6),
+        "waste_efficiency_ratio":     ratio,
+        "by_energy_method":           by_method,
+        "by_hardware":                by_hardware,
+    }
+
+
+def get_audit_waste_events(
+    db_path: Union[str, Path],
+    run_id: Optional[str] = None,
+    rule_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Retrieve filtered audit waste events."""
+    where, args = [], []
+    if run_id:
+        where.append("run_id = ?"); args.append(run_id)
+    if rule_id:
+        where.append("rule_id = ?"); args.append(rule_id)
+    if event_type:
+        where.append("event_type = ?"); args.append(event_type)
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    sql = f"""
+      SELECT event_id, run_id, event_type, tokens_wasted,
+             cost_wasted_usd, energy_wasted_kwh, heat_wasted_dollars,
+             rule_id, details
+        FROM audit_events
+       {clause}
+       ORDER BY ROWID DESC
+       LIMIT ?
+    """
+    args.append(limit)
+    with connect(db_path) as c:
+        return [dict(r) for r in c.execute(sql, args)]
+
+
+def get_audit_runs(
+    db_path: Union[str, Path],
+    session_id: Optional[str] = None,
+    limit: int = 50,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> list[dict]:
+    """Retrieve audit runs."""
+    where, args = [], []
+    if session_id:
+        where.append("session_id = ?"); args.append(session_id)
+    if since:
+        where.append("timestamp >= ?"); args.append(since)
+    if until:
+        where.append("timestamp < ?"); args.append(until)
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    sql = f"""
+      SELECT *
+        FROM audit_runs
+       {clause}
+       ORDER BY timestamp DESC
+       LIMIT ?
+    """
+    args.append(limit)
+    with connect(db_path) as c:
+        return [dict(r) for r in c.execute(sql, args)]
+
+
+def backfill_efficiency(
+    conn: sqlite3.Connection,
+    quality_loader=None,
+    force_all: bool = False,
+) -> tuple[int, int]:
+    """Backfill efficiency calculations for assistant messages.
+
+    Returns (backfilled_count, skipped_no_constants_count).
+    """
+    from .energy_table import lookup
+    from .quality_scores import composite_q
+    from .thermodynamics import MissingEnergyConstantsError, efficiency
+
+    scores_available = quality_loader.has_any() if quality_loader else False
+
+    if force_all:
+        query = """
+            SELECT uuid, model, input_tokens, output_tokens, message_id, session_id
+            FROM messages
+            WHERE type = 'assistant' AND model IS NOT NULL
+        """
+        params = ()
+    else:
+        query = """
+            SELECT uuid, model, input_tokens, output_tokens, message_id, session_id
+            FROM messages
+            WHERE type = 'assistant' AND model IS NOT NULL
+              AND (
+                eta IS NULL
+                OR (quality_adjusted = 0 AND ?)
+              )
+        """
+        params = (1 if scores_available else 0,)
+
+    cursor = conn.cursor()
+    rows = cursor.execute(query, params).fetchall()
+
+    backfilled = 0
+    skipped = 0
+
+    for row in rows:
+        uuid_val = row[0]
+        model = row[1]
+        n_in = row[2] or 0
+        n_out = row[3] or 0
+        msg_id = row[4]
+        sess_id = row[5]
+
+        try:
+            constants = lookup(model)
+        except (MissingEnergyConstantsError, Exception):
+            skipped += 1
+            continue
+
+        score = quality_loader.lookup(msg_id, sess_id) if quality_loader else None
+        q = composite_q(score) if score else None
+        report = efficiency(n_in, n_out, constants, q)
+
+        cursor.execute(
+            """
+            UPDATE messages SET
+              e_in_j = ?,
+              e_out_j = ?,
+              w_useful_j = ?,
+              waste_j = ?,
+              q_alpha = ?,
+              q_rho = ?,
+              quality_adjusted = ?,
+              eta = ?
+            WHERE uuid = ?
+            """,
+            (
+                report.e_in,
+                report.e_out,
+                report.w_useful,
+                report.waste_joules,
+                score.alpha if score else None,
+                score.rho if score else None,
+                1 if report.quality_adjusted else 0,
+                report.eta,
+                uuid_val,
+            ),
+        )
+        backfilled += 1
+
+    conn.commit()
+    return backfilled, skipped
+
+
+def efficiency_overview(
+    db_path: Union[str, Path],
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> dict:
+    """Return aggregate efficiency metrics, strictly separating adjusted and unadjusted eta."""
+    rng, args = _range_clause(since, until)
+    sql = f"""
+      SELECT
+        AVG(CASE WHEN quality_adjusted = 1 THEN eta END) AS avg_eta_adjusted,
+        AVG(CASE WHEN quality_adjusted = 0 AND eta IS NOT NULL THEN eta END) AS avg_eta_unadjusted,
+        SUM(CASE WHEN quality_adjusted = 1 THEN 1 ELSE 0 END) AS quality_adjusted_count,
+        SUM(CASE WHEN quality_adjusted = 0 AND eta IS NOT NULL THEN 1 ELSE 0 END) AS unadjusted_count,
+        COALESCE(SUM(e_in_j), 0.0) AS sum_e_in_j,
+        COALESCE(SUM(w_useful_j), 0.0) AS sum_w_useful_j,
+        COALESCE(SUM(waste_j), 0.0) AS sum_waste_j,
+        COUNT(eta) AS total_rows_with_eta
+      FROM messages
+      WHERE type = 'assistant' AND eta IS NOT NULL {rng}
+    """
+    with connect(db_path) as c:
+        row = c.execute(sql, args).fetchone()
+        res = dict(row) if row else {}
+        total = int(res.get("total_rows_with_eta") or 0)
+        adj_cnt = int(res.get("quality_adjusted_count") or 0)
+        unadj_cnt = int(res.get("unadjusted_count") or 0)
+        mix_ratio = round(adj_cnt / total, 4) if total > 0 else 0.0
+
+        avg_adj = res.get("avg_eta_adjusted")
+        avg_unadj = res.get("avg_eta_unadjusted")
+
+        return {
+            "avg_eta_adjusted": round(float(avg_adj), 6) if avg_adj is not None else None,
+            "avg_eta_unadjusted": round(float(avg_unadj), 6) if avg_unadj is not None else None,
+            "quality_adjusted_count": adj_cnt,
+            "unadjusted_count": unadj_cnt,
+            "mix_ratio": mix_ratio,
+            "sum_e_in_j": round(float(res.get("sum_e_in_j") or 0.0), 6),
+            "sum_w_useful_j": round(float(res.get("sum_w_useful_j") or 0.0), 6),
+            "sum_waste_j": round(float(res.get("sum_waste_j") or 0.0), 6),
+            "total_rows_with_eta": total,
+        }
+
+
+def efficiency_by_model(
+    db_path: Union[str, Path],
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> list[dict]:
+    """Return efficiency metrics broken down by model."""
+    rng, args = _range_clause(since, until)
+    sql = f"""
+      SELECT
+        model,
+        COUNT(eta) AS turns_with_eta,
+        AVG(CASE WHEN quality_adjusted = 1 THEN eta END) AS avg_eta_adjusted,
+        AVG(CASE WHEN quality_adjusted = 0 AND eta IS NOT NULL THEN eta END) AS avg_eta_unadjusted,
+        SUM(CASE WHEN quality_adjusted = 1 THEN 1 ELSE 0 END) AS quality_adjusted_count,
+        SUM(CASE WHEN quality_adjusted = 0 AND eta IS NOT NULL THEN 1 ELSE 0 END) AS unadjusted_count,
+        COALESCE(SUM(e_in_j), 0.0) AS sum_e_in_j,
+        COALESCE(SUM(w_useful_j), 0.0) AS sum_w_useful_j,
+        COALESCE(SUM(waste_j), 0.0) AS sum_waste_j
+      FROM messages
+      WHERE type = 'assistant' AND eta IS NOT NULL {rng}
+      GROUP BY model
+      ORDER BY sum_waste_j DESC
+    """
+    with connect(db_path) as c:
+        rows = c.execute(sql, args).fetchall()
+        result = []
+        for r in rows:
+            row = dict(r)
+            avg_adj = row.get("avg_eta_adjusted")
+            avg_unadj = row.get("avg_eta_unadjusted")
+            result.append({
+                "model": row["model"],
+                "turns_with_eta": int(row.get("turns_with_eta") or 0),
+                "avg_eta_adjusted": round(float(avg_adj), 6) if avg_adj is not None else None,
+                "avg_eta_unadjusted": round(float(avg_unadj), 6) if avg_unadj is not None else None,
+                "quality_adjusted_count": int(row.get("quality_adjusted_count") or 0),
+                "unadjusted_count": int(row.get("unadjusted_count") or 0),
+                "sum_e_in_j": round(float(row.get("sum_e_in_j") or 0.0), 6),
+                "sum_w_useful_j": round(float(row.get("sum_w_useful_j") or 0.0), 6),
+                "sum_waste_j": round(float(row.get("sum_waste_j") or 0.0), 6),
+            })
+        return result
+
+
+def efficiency_sessions(
+    db_path: Union[str, Path],
+    limit: int = 20,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> list[dict]:
+    """Return top wasteful sessions ranked by sum_waste_j descending."""
+    rng, args = _range_clause(since, until)
+    sql = f"""
+      SELECT
+        session_id,
+        project_slug,
+        COUNT(eta) AS turns_with_eta,
+        AVG(CASE WHEN quality_adjusted = 1 THEN eta END) AS avg_eta_adjusted,
+        AVG(CASE WHEN quality_adjusted = 0 AND eta IS NOT NULL THEN eta END) AS avg_eta_unadjusted,
+        COALESCE(SUM(e_in_j), 0.0) AS sum_e_in_j,
+        COALESCE(SUM(w_useful_j), 0.0) AS sum_w_useful_j,
+        COALESCE(SUM(waste_j), 0.0) AS sum_waste_j
+      FROM messages
+      WHERE type = 'assistant' AND eta IS NOT NULL {rng}
+      GROUP BY session_id, project_slug
+      ORDER BY sum_waste_j DESC
+      LIMIT ?
+    """
+    args.append(limit)
+    with connect(db_path) as c:
+        rows = c.execute(sql, args).fetchall()
+        result = []
+        for r in rows:
+            row = dict(r)
+            avg_adj = row.get("avg_eta_adjusted")
+            avg_unadj = row.get("avg_eta_unadjusted")
+            result.append({
+                "session_id": row["session_id"],
+                "project_slug": row["project_slug"],
+                "turns_with_eta": int(row.get("turns_with_eta") or 0),
+                "avg_eta_adjusted": round(float(avg_adj), 6) if avg_adj is not None else None,
+                "avg_eta_unadjusted": round(float(avg_unadj), 6) if avg_unadj is not None else None,
+                "sum_e_in_j": round(float(row.get("sum_e_in_j") or 0.0), 6),
+                "sum_w_useful_j": round(float(row.get("sum_w_useful_j") or 0.0), 6),
+                "sum_waste_j": round(float(row.get("sum_waste_j") or 0.0), 6),
+            })
+        return result
+
+
+def efficiency_by_day(
+    db_path: Union[str, Path],
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> list[dict]:
+    """Return daily time series of efficiency and energy metrics."""
+    rng, args = _range_clause(since, until)
+    sql = f"""
+      SELECT
+        SUBSTR(timestamp, 1, 10) AS day,
+        COALESCE(SUM(e_in_j), 0.0) AS sum_e_in_j,
+        COALESCE(SUM(w_useful_j), 0.0) AS sum_w_useful_j,
+        COALESCE(SUM(waste_j), 0.0) AS sum_waste_j,
+        AVG(CASE WHEN quality_adjusted = 1 THEN eta END) AS avg_eta_adjusted,
+        AVG(CASE WHEN quality_adjusted = 0 AND eta IS NOT NULL THEN eta END) AS avg_eta_unadjusted
+      FROM messages
+      WHERE type = 'assistant' AND eta IS NOT NULL {rng}
+      GROUP BY day
+      ORDER BY day ASC
+    """
+    with connect(db_path) as c:
+        rows = c.execute(sql, args).fetchall()
+        result = []
+        for r in rows:
+            row = dict(r)
+            avg_adj = row.get("avg_eta_adjusted")
+            avg_unadj = row.get("avg_eta_unadjusted")
+            result.append({
+                "day": row["day"],
+                "sum_e_in_j": round(float(row.get("sum_e_in_j") or 0.0), 6),
+                "sum_w_useful_j": round(float(row.get("sum_w_useful_j") or 0.0), 6),
+                "sum_waste_j": round(float(row.get("sum_waste_j") or 0.0), 6),
+                "avg_eta_adjusted": round(float(avg_adj), 6) if avg_adj is not None else None,
+                "avg_eta_unadjusted": round(float(avg_unadj), 6) if avg_unadj is not None else None,
+            })
+        return result
+
+
 
