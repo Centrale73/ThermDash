@@ -104,5 +104,68 @@ class DismissTests(unittest.TestCase):
         self.assertFalse(tips_after)
 
 
+class EfficiencyTipTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db = os.path.join(self.tmp, "t.db")
+        init_db(self.db)
+
+    def test_no_scores_tip_emitted(self):
+        with connect(self.db) as c:
+            c.execute("""
+                INSERT INTO messages (
+                    uuid, session_id, project_slug, type, timestamp, model,
+                    input_tokens, output_tokens, eta, quality_adjusted,
+                    e_in_j, w_useful_j, waste_j
+                ) VALUES (
+                    'm1', 's1', 'proj', 'assistant', '2026-04-18T12:00:00Z', 'gpt-4o',
+                    100, 50, 0.8, 0, 0.02, 0.016, 0.004
+                )
+            """)
+            c.commit()
+
+        from token_dashboard.tips import efficiency_tips
+        tips = efficiency_tips(self.db, today_iso="2026-04-19T00:00:00")
+        keys = [t["key"] for t in tips]
+        self.assertIn("efficiency:no-scores", keys)
+
+    def test_high_waste_tip_emitted(self):
+        with connect(self.db) as c:
+            c.execute("""
+                INSERT INTO messages (
+                    uuid, session_id, project_slug, type, timestamp, model,
+                    input_tokens, output_tokens, eta, quality_adjusted,
+                    e_in_j, w_useful_j, waste_j
+                ) VALUES (
+                    'm2', 's2', 'proj', 'assistant', '2026-04-18T12:00:00Z', 'gpt-4o',
+                    1000, 10, 0.1, 1, 0.05, 0.005, 0.045
+                )
+            """)
+            c.commit()
+
+        from token_dashboard.tips import efficiency_tips
+        tips = efficiency_tips(self.db, today_iso="2026-04-19T00:00:00")
+        keys = [t["key"] for t in tips]
+        self.assertIn("efficiency:high-waste", keys)
+
+    def test_no_tip_when_no_eta(self):
+        with connect(self.db) as c:
+            c.execute("""
+                INSERT INTO messages (
+                    uuid, session_id, project_slug, type, timestamp, model,
+                    input_tokens, output_tokens, eta
+                ) VALUES (
+                    'm3', 's3', 'proj', 'assistant', '2026-04-18T12:00:00Z', 'gpt-4o',
+                    100, 50, NULL
+                )
+            """)
+            c.commit()
+
+        from token_dashboard.tips import efficiency_tips
+        tips = efficiency_tips(self.db, today_iso="2026-04-19T00:00:00")
+        self.assertEqual(len(tips), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
+

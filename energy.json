@@ -1,0 +1,57 @@
+{
+  "sources": {
+    "luccioni2024": "https://arxiv.org/abs/2311.16863",
+    "arXiv2504": "https://arxiv.org/abs/2504.03360",
+    "arXiv2604": "https://arxiv.org/abs/2604.09048"
+  },
+  "models": {
+    "claude-3-5-sonnet": {
+      "gpu": "A100",
+      "e_prefill": 0.000025,
+      "e_decode": 0.000310,
+      "kappa": 1.0,
+      "measured": false,
+      "source": "luccioni2024"
+    },
+    "claude-opus-4-7": {
+      "gpu": "H100",
+      "e_prefill": 0.000060,
+      "e_decode": 0.000720,
+      "kappa": 1.0,
+      "measured": false,
+      "source": "arXiv2504"
+    },
+    "gpt-4o": {
+      "gpu": "H100",
+      "e_prefill": 0.000030,
+      "e_decode": 0.000350,
+      "kappa": 1.0,
+      "measured": false,
+      "source": "luccioni2024"
+    },
+    "gpt-4o-mini": {
+      "gpu": "H100",
+      "e_prefill": 0.000004,
+      "e_decode": 0.000045,
+      "kappa": 1.0,
+      "measured": false,
+      "source": "luccioni2024"
+    },
+    "llama-3.1-70b": {
+      "gpu": "A100",
+      "e_prefill": 0.000018,
+      "e_decode": 0.000210,
+      "kappa": 1.0,
+      "measured": false,
+      "source": "luccioni2024"
+    },
+    "gemini-3.7-flash": {
+      "gpu": "TPUv4",
+      "e_prefill": 0.000003,
+      "e_decode": 0.000035,
+      "kappa": 1.0,
+      "measured": false,
+      "source": "arXiv2504"
+    }
+  }
+}

@@ -96,5 +96,47 @@ class ServerTests(unittest.TestCase):
             self.assertIn("energy_wh", data["impacts"])
 
 
+    def test_efficiency_overview_empty_state(self):
+        body = json.loads(self._get("/api/efficiency/overview"))
+        self.assertIn("avg_eta_adjusted", body)
+        self.assertIn("avg_eta_unadjusted", body)
+        self.assertNotIn("avg_eta", body)
+        self.assertIn("sum_e_in_j", body)
+        self.assertIn("sum_w_useful_j", body)
+        self.assertIn("sum_waste_j", body)
+
+    def test_efficiency_by_model_empty_state(self):
+        body = json.loads(self._get("/api/efficiency/by_model"))
+        self.assertIsInstance(body, list)
+
+    def test_efficiency_sessions_empty_state(self):
+        body = json.loads(self._get("/api/efficiency/sessions"))
+        self.assertIsInstance(body, list)
+
+    def test_efficiency_by_day_empty_state(self):
+        body = json.loads(self._get("/api/efficiency/by_day"))
+        self.assertIsInstance(body, list)
+
+    def test_quality_scores_post_roundtrip(self):
+        payload = {
+            "message_id": "m_test_123",
+            "session_id": "s_test_456",
+            "alpha": 0.9,
+            "rho": 0.7,
+            "method": "human",
+        }
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/quality_scores",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 201)
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data.get("ok"))
+            self.assertAlmostEqual(data.get("q"), 0.8, places=4)
+
+
 if __name__ == "__main__":
     unittest.main()

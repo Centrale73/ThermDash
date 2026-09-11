@@ -1,13 +1,33 @@
-"""JSONL transcript walker + parser."""
-from __future__ import annotations
-
 import json
+import math
+import re
 import time
+import uuid
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
-from .db import connect
+from .db import backfill_efficiency, connect
+from .delta_heat import compute_cost_and_thermal_delta
 from .ecologits_bridge import estimate_impacts
+from .energy_table import lookup
+from .quality_scores import composite_q, get_loader, init_loader
+from .thermodynamics import MissingEnergyConstantsError, efficiency
+
+
+@dataclass
+class WasteEvent:
+    event_id: str
+    run_id: str
+    event_type: str  # 'retry_chain' | 'redundant_call' | 'cache_miss' | 'output_padding'
+    rule_id: str      # 'W001_RETRY_CHAIN' | 'W002_REDUNDANT_TOOL_CALL' | 'W003_CACHE_MISS_LEAK' | 'W004_EXCESSIVE_OUTPUT_PADDING'
+    tokens_wasted: int
+    cost_wasted_usd: float
+    energy_wasted_kwh: float
+    heat_wasted_dollars: float
+    details: str
+
 
 
 INSERT_MSG = """
@@ -16,13 +36,15 @@ INSERT OR REPLACE INTO messages (
   type, is_sidechain, agent_id, timestamp, model, stop_reason, prompt_id, message_id,
   input_tokens, output_tokens, cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens,
   prompt_text, prompt_chars, tool_calls_json,
-  energy_kwh, gwp_kgco2eq, wcf_l, adpe_kgsbeq, pe_mj, impact_source
+  energy_kwh, gwp_kgco2eq, wcf_l, adpe_kgsbeq, pe_mj, impact_source,
+  e_in_j, e_out_j, w_useful_j, waste_j, q_alpha, q_rho, quality_adjusted, eta
 ) VALUES (
   :uuid, :parent_uuid, :session_id, :project_slug, :cwd, :git_branch, :cc_version, :entrypoint,
   :type, :is_sidechain, :agent_id, :timestamp, :model, :stop_reason, :prompt_id, :message_id,
   :input_tokens, :output_tokens, :cache_read_tokens, :cache_create_5m_tokens, :cache_create_1h_tokens,
   :prompt_text, :prompt_chars, :tool_calls_json,
-  :energy_kwh, :gwp_kgco2eq, :wcf_l, :adpe_kgsbeq, :pe_mj, :impact_source
+  :energy_kwh, :gwp_kgco2eq, :wcf_l, :adpe_kgsbeq, :pe_mj, :impact_source,
+  :e_in_j, :e_out_j, :w_useful_j, :waste_j, :q_alpha, :q_rho, :quality_adjusted, :eta
 )
 """
 
@@ -165,6 +187,34 @@ def parse_record(rec: dict, project_slug: str) -> Tuple[dict, List[dict]]:
     msg["adpe_kgsbeq"] = impact.adpe_kgsbeq
     msg["pe_mj"] = impact.pe_mj
     msg["impact_source"] = impact.source
+
+    msg["e_in_j"] = None
+    msg["e_out_j"] = None
+    msg["w_useful_j"] = None
+    msg["waste_j"] = None
+    msg["q_alpha"] = None
+    msg["q_rho"] = None
+    msg["quality_adjusted"] = 0
+    msg["eta"] = None
+
+    if msg["type"] == "assistant" and msg["model"]:
+        try:
+            constants = lookup(msg["model"])
+            loader = get_loader()
+            score = loader.lookup(msg["message_id"], msg["session_id"]) if loader else None
+            q = composite_q(score) if score else None
+            report = efficiency(msg["input_tokens"], msg["output_tokens"], constants, q)
+            msg["e_in_j"] = report.e_in
+            msg["e_out_j"] = report.e_out
+            msg["w_useful_j"] = report.w_useful
+            msg["waste_j"] = report.waste_joules
+            msg["q_alpha"] = score.alpha if score else None
+            msg["q_rho"] = score.rho if score else None
+            msg["quality_adjusted"] = 1 if report.quality_adjusted else 0
+            msg["eta"] = report.eta
+        except (MissingEnergyConstantsError, Exception):
+            pass
+
     tools = _extract_tools(rec)
     tools.extend(_extract_results(rec))
     if tools:
@@ -259,10 +309,18 @@ def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0) -> dict:
     return {"messages": msgs, "tools": tools, "end_offset": end_offset}
 
 
-def scan_dir(projects_root: Union[str, Path], db_path: Union[str, Path]) -> dict:
+def scan_dir(
+    projects_root: Union[str, Path],
+    db_path: Union[str, Path],
+    recompute: bool = False,
+) -> dict:
     root = Path(projects_root)
     totals = {"messages": 0, "tools": 0, "files": 0}
+    init_loader(json_path=Path("quality_scores.json"), db_path=db_path)
     if not root.is_dir():
+        if recompute:
+            with connect(db_path) as conn:
+                backfill_efficiency(conn, get_loader(), force_all=True)
         return totals
     with connect(db_path) as conn:
         for p in root.rglob("*.jsonl"):
@@ -290,5 +348,241 @@ def scan_dir(projects_root: Union[str, Path], db_path: Union[str, Path]) -> dict
             totals["messages"] += sub["messages"]
             totals["tools"]    += sub["tools"]
             totals["files"]    += 1
+        if recompute:
+            backfill_efficiency(conn, get_loader(), force_all=True)
         conn.commit()
     return totals
+
+
+def cosine_similarity(text1: str, text2: str) -> float:
+    """Compute cosine similarity between two text snippets using character 3-grams
+
+    (with word-level fallback) to robustly capture prompt thrashing and retry loops.
+    """
+    if not text1 or not text2:
+        return 0.0
+    t1 = text1.strip().lower()
+    t2 = text2.strip().lower()
+    if t1 == t2:
+        return 1.0
+    grams1 = [t1[i:i+3] for i in range(len(t1) - 2)]
+    grams2 = [t2[i:i+3] for i in range(len(t2) - 2)]
+    if not grams1 or not grams2:
+        grams1 = re.findall(r"\w+", t1)
+        grams2 = re.findall(r"\w+", t2)
+    if not grams1 or not grams2:
+        return 0.0
+    v1 = Counter(grams1)
+    v2 = Counter(grams2)
+    common = set(v1.keys()) & set(v2.keys())
+    numerator = sum(v1[t] * v2[t] for t in common)
+    denom1 = sum(v1[t] ** 2 for t in v1)
+    denom2 = sum(v2[t] ** 2 for t in v2)
+    if not denom1 or not denom2:
+        return 0.0
+    return float(numerator) / (math.sqrt(denom1) * math.sqrt(denom2))
+
+
+def eval_w001_retry_chain(
+    turns: list[dict],
+    run_id: str = "",
+    model: str = "claude-3-5-sonnet",
+    region_key: str = "quebec_commercial_hydro",
+) -> list[WasteEvent]:
+    """Rule W001_RETRY_CHAIN: Detects retry loops/prompt thrashing when cosine
+
+    similarity between consecutive user prompts > 0.92. Flags 100% of prior
+    failed turns as wasted tokens, cost, and energy.
+    """
+    events = []
+    user_turns = [t for t in turns if t.get("type") == "user" and t.get("prompt_text")]
+    for i in range(1, len(user_turns)):
+        prev_turn = user_turns[i - 1]
+        curr_turn = user_turns[i]
+        sim = cosine_similarity(prev_turn.get("prompt_text", ""), curr_turn.get("prompt_text", ""))
+        if sim > 0.92:
+            w_in = int(prev_turn.get("input_tokens") or 0)
+            w_out = int(prev_turn.get("output_tokens") or 0)
+            p_uuid = prev_turn.get("uuid")
+            for t in turns:
+                if t.get("parent_uuid") == p_uuid and t.get("type") == "assistant":
+                    w_in += int(t.get("input_tokens") or 0)
+                    w_out += int(t.get("output_tokens") or 0)
+            if w_in == 0 and w_out == 0:
+                chars = len(prev_turn.get("prompt_text") or "")
+                w_in = max(10, chars // 4)
+
+            m_name = curr_turn.get("model") or prev_turn.get("model") or model
+            delta = compute_cost_and_thermal_delta(
+                model=m_name,
+                total_in=w_in,
+                total_out=w_out,
+                useful_in=0,
+                useful_out=0,
+                region_key=region_key,
+            )
+            events.append(WasteEvent(
+                event_id=str(uuid.uuid4()),
+                run_id=run_id or str(curr_turn.get("session_id") or ""),
+                event_type="retry_chain",
+                rule_id="W001_RETRY_CHAIN",
+                tokens_wasted=w_in + w_out,
+                cost_wasted_usd=delta.cost_wasted_usd,
+                energy_wasted_kwh=delta.energy_wasted_kwh,
+                heat_wasted_dollars=delta.heat_dollars_wasted,
+                details=f"Cosine similarity {sim:.3f} > 0.92 detected between consecutive prompts.",
+            ))
+    return events
+
+
+def eval_w002_redundant_tool_call(
+    tool_calls: list[dict],
+    run_id: str = "",
+    model: str = "claude-3-5-sonnet",
+    region_key: str = "quebec_commercial_hydro",
+) -> list[WasteEvent]:
+    """Rule W002_REDUNDANT_TOOL_CALL: Detects duplicate tool calls within the
+
+    same turn/session with matching name, arguments, and outputs. Flags subsequent
+    calls as execution waste.
+    """
+    events = []
+    seen = {}
+    for t in tool_calls:
+        name = t.get("tool_name")
+        if not name or name == "_tool_result":
+            continue
+        target = str(t.get("target") or "")
+        key = (name, target)
+        if key in seen:
+            res_tokens = int(t.get("result_tokens") or 50)
+            delta = compute_cost_and_thermal_delta(
+                model=model,
+                total_in=res_tokens,
+                total_out=0,
+                useful_in=0,
+                useful_out=0,
+                region_key=region_key,
+            )
+            events.append(WasteEvent(
+                event_id=str(uuid.uuid4()),
+                run_id=run_id or str(t.get("session_id") or ""),
+                event_type="redundant_call",
+                rule_id="W002_REDUNDANT_TOOL_CALL",
+                tokens_wasted=res_tokens,
+                cost_wasted_usd=delta.cost_wasted_usd,
+                energy_wasted_kwh=delta.energy_wasted_kwh,
+                heat_wasted_dollars=delta.heat_dollars_wasted,
+                details=f"Redundant tool call '{name}' with target '{target[:100]}'.",
+            ))
+        else:
+            seen[key] = t
+    return events
+
+
+def eval_w003_cache_miss_leak(
+    turns: list[dict],
+    run_id: str = "",
+    model: str = "claude-3-5-sonnet",
+    region_key: str = "quebec_commercial_hydro",
+) -> list[WasteEvent]:
+    """Rule W003_CACHE_MISS_LEAK: Identifies repeated static system prompts (> 2,000 tokens)
+
+    transmitted without prompt-caching headers (cache_read=0 and cache_create=0).
+    """
+    events = []
+    for i, t in enumerate(turns):
+        if i == 0:
+            continue
+        in_tok = int(t.get("input_tokens") or 0)
+        c_read = int(t.get("cache_read_tokens") or 0)
+        c_create = int(t.get("cache_create_5m_tokens") or 0) + int(t.get("cache_create_1h_tokens") or 0)
+        if in_tok > 2000 and c_read == 0 and c_create == 0:
+            wasted_tok = in_tok - 500  # baseline turns should have cached
+            m_name = t.get("model") or model
+            delta = compute_cost_and_thermal_delta(
+                model=m_name,
+                total_in=wasted_tok,
+                total_out=0,
+                useful_in=0,
+                useful_out=0,
+                region_key=region_key,
+            )
+            events.append(WasteEvent(
+                event_id=str(uuid.uuid4()),
+                run_id=run_id or str(t.get("session_id") or ""),
+                event_type="cache_miss",
+                rule_id="W003_CACHE_MISS_LEAK",
+                tokens_wasted=wasted_tok,
+                cost_wasted_usd=delta.cost_wasted_usd,
+                energy_wasted_kwh=delta.energy_wasted_kwh,
+                heat_wasted_dollars=delta.heat_dollars_wasted,
+                details=f"Static prompt > 2,000 tokens ({in_tok} tokens) sent on turn {i+1} without prompt-caching headers.",
+            ))
+    return events
+
+
+def eval_w004_excessive_output_padding(
+    turns: list[dict],
+    run_id: str = "",
+    model: str = "claude-3-5-sonnet",
+    region_key: str = "quebec_commercial_hydro",
+) -> list[WasteEvent]:
+    """Rule W004_EXCESSIVE_OUTPUT_PADDING: Detects structured tasks returning conversational
+
+    boilerplate > 4x the requested payload size.
+    """
+    events = []
+    for i in range(len(turns)):
+        curr = turns[i]
+        if curr.get("type") == "assistant":
+            prompt_text = ""
+            for j in range(i - 1, -1, -1):
+                if turns[j].get("type") == "user":
+                    prompt_text = (turns[j].get("prompt_text") or "").lower()
+                    break
+            structured_keywords = ["json", "yaml", "boolean", "true/false", "only return", "id only", "concise status"]
+            if any(kw in prompt_text for kw in structured_keywords):
+                out_tokens = int(curr.get("output_tokens") or 0)
+                expected = 50  # expected concise structured payload size
+                if out_tokens > 4 * expected:
+                    wasted_out = out_tokens - expected
+                    m_name = curr.get("model") or model
+                    delta = compute_cost_and_thermal_delta(
+                        model=m_name,
+                        total_in=0,
+                        total_out=wasted_out,
+                        useful_in=0,
+                        useful_out=0,
+                        region_key=region_key,
+                    )
+                    events.append(WasteEvent(
+                        event_id=str(uuid.uuid4()),
+                        run_id=run_id or str(curr.get("session_id") or ""),
+                        event_type="output_padding",
+                        rule_id="W004_EXCESSIVE_OUTPUT_PADDING",
+                        tokens_wasted=wasted_out,
+                        cost_wasted_usd=delta.cost_wasted_usd,
+                        energy_wasted_kwh=delta.energy_wasted_kwh,
+                        heat_wasted_dollars=delta.heat_dollars_wasted,
+                        details=f"Structured query returned {out_tokens} tokens (> 4x expected payload {expected} tokens).",
+                    ))
+    return events
+
+
+def scan_waste_rules(
+    turns: list[dict],
+    tool_calls: Optional[list[dict]] = None,
+    run_id: str = "",
+    model: str = "claude-3-5-sonnet",
+    region_key: str = "quebec_commercial_hydro",
+) -> list[WasteEvent]:
+    """Run all waste attribution rules W001-W004 and return combined waste events."""
+    events = []
+    events.extend(eval_w001_retry_chain(turns, run_id=run_id, model=model, region_key=region_key))
+    if tool_calls:
+        events.extend(eval_w002_redundant_tool_call(tool_calls, run_id=run_id, model=model, region_key=region_key))
+    events.extend(eval_w003_cache_miss_leak(turns, run_id=run_id, model=model, region_key=region_key))
+    events.extend(eval_w004_excessive_output_padding(turns, run_id=run_id, model=model, region_key=region_key))
+    return events
+

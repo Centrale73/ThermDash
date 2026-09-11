@@ -8,3 +8,4 @@ node_modules/
 .superpowers/
 .claude/
 docs/superpowers/
+quality_scores.json

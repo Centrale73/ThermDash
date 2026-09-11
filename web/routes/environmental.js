@@ -60,10 +60,13 @@ export default async function (root) {
   const range = readRange();
   const since = sinceIso(range);
 
-  const [impacts, daily, models] = await Promise.all([
+  const [impacts, daily, models, effOverview, effModels, effDaily] = await Promise.all([
     api(withSince('/api/impacts', since)),
     api(withSince('/api/impacts/daily', since)),
     api(withSince('/api/impacts/models', since)),
+    api(withSince('/api/efficiency/overview', since)),
+    api(withSince('/api/efficiency/by_model', since)),
+    api(withSince('/api/efficiency/by_day', since)),
   ]);
 
   const totalEnergyKwh = Number(impacts.energy_kwh || 0);
@@ -93,6 +96,19 @@ export default async function (root) {
   const usaEmissionsG = totalGwpG.toFixed(1);
   const avoidedGwpG = Math.max(0, totalGwpG - Number(qcEmissionsG)).toFixed(1);
 
+  // Thermodynamic Efficiency calculations
+  const showQ1Banner = effOverview.total_rows_with_eta > 0 && effOverview.quality_adjusted_count === 0;
+  const hasAdj = effOverview.avg_eta_adjusted !== null && effOverview.avg_eta_adjusted !== undefined;
+  const hasUnadj = effOverview.avg_eta_unadjusted !== null && effOverview.avg_eta_unadjusted !== undefined;
+  const primaryEta = hasAdj ? effOverview.avg_eta_adjusted : (hasUnadj ? effOverview.avg_eta_unadjusted : null);
+  const primaryEtaLabel = hasAdj ? 'Thermodynamic Efficiency η (Quality-Adjusted)' : 'Thermodynamic Efficiency η (Unadjusted, Q=1)';
+  const primaryEtaDisplay = primaryEta !== null ? (primaryEta * 100).toFixed(1) + '%' : '—';
+
+  const sumEinJ = Number(effOverview.sum_e_in_j || 0);
+  const sumWUsefulJ = Number(effOverview.sum_w_useful_j || 0);
+  const sumWasteJ = Number(effOverview.sum_waste_j || 0);
+  const wasteShare = sumEinJ > 0 ? ((sumWasteJ / sumEinJ) * 100).toFixed(1) + '%' : '0.0%';
+
   const rangeTabs = `
     <div class="range-tabs" role="tablist">
       ${RANGES.map(r => `<button data-range="${r.key}" class="${r.key === range.key ? 'active' : ''}">${r.label}</button>`).join('')}
@@ -100,13 +116,111 @@ export default async function (root) {
 
   root.innerHTML = `
     <div class="flex" style="margin-bottom:14px">
-      <h2 style="margin:0;font-size:16px;letter-spacing:-0.01em">Environmental Impact × EcoLogits</h2>
+      <h2 style="margin:0;font-size:16px;letter-spacing:-0.01em">Thermodynamic Efficiency & Environmental Impact</h2>
       <span class="muted" style="font-size:12px">${range.days ? `last ${range.days} days` : 'all time'}</span>
       <div class="spacer"></div>
       ${rangeTabs}
     </div>
 
-    <!-- Top KPI Cards Row -->
+    ${showQ1Banner ? `
+      <div class="card" style="background:var(--panel-2);border-left:4px solid var(--warn);padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <strong>⚠ Q = 1 assumed</strong> — no quality scores configured. Supply <code>quality_scores.json</code> or use <code>thermo score</code> to audit true quality-gated useful work.
+        </div>
+        <span class="muted" style="font-size:12px">Simplified v1 Mode</span>
+      </div>
+    ` : ''}
+
+    <!-- Thermodynamic Efficiency Top KPI Row -->
+    <div class="row cols-4">
+      <div class="card kpi">
+        <div class="label">${primaryEtaLabel}</div>
+        <div class="value big" style="color:var(--good)">
+          ${primaryEtaDisplay}
+          ${effOverview.quality_adjusted_count > 0 && effOverview.unadjusted_count > 0 ? `
+            <span class="badge haiku" style="font-size:11px;vertical-align:middle;margin-left:4px">${(effOverview.mix_ratio * 100).toFixed(0)}% Q-adj</span>
+          ` : ''}
+        </div>
+        <div class="sub">${effOverview.quality_adjusted_count} adjusted / ${effOverview.unadjusted_count} unadjusted turns</div>
+      </div>
+      <div class="card kpi">
+        <div class="label">Total Energy In (E_in)</div>
+        <div class="value" style="color:var(--accent)" title="${sumEinJ.toFixed(6)} Joules">${sumEinJ.toFixed(3)} J</div>
+        <div class="sub">${(sumEinJ / 3600.0).toFixed(4)} Wh prefill + decode</div>
+      </div>
+      <div class="card kpi">
+        <div class="label">Useful Work (W_useful)</div>
+        <div class="value" style="color:#3FB68B" title="${sumWUsefulJ.toFixed(6)} Joules">${sumWUsefulJ.toFixed(3)} J</div>
+        <div class="sub">Q × E_out decode yield (${(sumWUsefulJ / 3600.0).toFixed(4)} Wh)</div>
+      </div>
+      <div class="card kpi">
+        <div class="label">Thermodynamic Waste</div>
+        <div class="value" style="color:#E5484D" title="${sumWasteJ.toFixed(6)} Joules">${sumWasteJ.toFixed(3)} J</div>
+        <div class="sub">${wasteShare} waste share (${(sumWasteJ / 3600.0).toFixed(4)} Wh)</div>
+      </div>
+    </div>
+
+    <!-- Efficiency Charts Row -->
+    <div class="row cols-2" style="margin-top:16px">
+      <div class="card">
+        <h3>Useful Work vs. Waste Over Time</h3>
+        <p class="muted" style="margin:-4px 0 10px;font-size:12px">Daily useful computational yield (W_useful) vs. unutilized energy waste in Joules.</p>
+        <div id="ch-daily-waste" style="height:270px"></div>
+      </div>
+      <div class="card">
+        <h3>Thermodynamic Efficiency by Model</h3>
+        <p class="muted" style="margin:-4px 0 10px;font-size:12px">Average η percentage achieved across active models in this time window.</p>
+        <div id="ch-model-eta" style="height:270px"></div>
+      </div>
+    </div>
+
+    <!-- Per-Model Efficiency Table -->
+    <div class="card" style="margin-top:16px">
+      <h3>Thermodynamic Efficiency by Model</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th class="num">Turns</th>
+            <th class="num">η (Quality-Adj)</th>
+            <th class="num">η (Unadjusted)</th>
+            <th class="num">E_in (J)</th>
+            <th class="num">W_useful (J)</th>
+            <th class="num">Waste (Wh)</th>
+            <th class="num">Hardware / Constants</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${effModels.map(m => {
+            const wasteWh = (m.sum_waste_j || 0) / 3600.0;
+            const adjDisplay = m.avg_eta_adjusted !== null ? (m.avg_eta_adjusted * 100).toFixed(1) + '%' : '—';
+            const unadjDisplay = m.avg_eta_unadjusted !== null ? (m.avg_eta_unadjusted * 100).toFixed(1) + '%' : '—';
+            const measuredBadge = m.energy_measured ? '<span class="badge" style="color:var(--good);font-size:10px">measured</span>' : '<span class="badge" style="font-size:10px">estimate</span>';
+            return `
+              <tr>
+                <td><span class="badge ${fmt.modelClass(m.model)}">${fmt.htmlSafe(m.model)}</span></td>
+                <td class="num">${fmt.int(m.turns_with_eta)}</td>
+                <td class="num" style="color:#3FB68B;font-weight:600">${adjDisplay}</td>
+                <td class="num">${unadjDisplay}</td>
+                <td class="num">${(m.sum_e_in_j || 0).toFixed(3)}</td>
+                <td class="num">${(m.sum_w_useful_j || 0).toFixed(3)}</td>
+                <td class="num">${wasteWh.toFixed(4)}</td>
+                <td class="num" style="font-size:12px">${fmt.htmlSafe(m.gpu || 'GPU')} · ${fmt.htmlSafe(m.energy_source || 'luccioni2024')} ${measuredBadge}</td>
+              </tr>
+            `;
+          }).join('') || '<tr><td colspan="8" class="muted">No efficiency records in this range</td></tr>'}
+        </tbody>
+      </table>
+      <div class="muted" style="font-size:11px;margin-top:8px">
+        * Note: Energy constants are estimates based on published literature (marked estimate). Model inference energy spans 0.003–1.0 J/token across hardware architectures.
+      </div>
+    </div>
+
+    <!-- EcoLogits Environmental Impact Section -->
+    <div style="margin-top:24px;margin-bottom:12px;display:flex;align-items:center">
+      <h3 style="margin:0;font-size:15px">Lifecycle Environmental Impact (EcoLogits LCA)</h3>
+    </div>
+
     <div class="row cols-4">
       <div class="card kpi">
         <div class="label">Total Electricity</div>
@@ -133,7 +247,7 @@ export default async function (root) {
     <!-- Lean Six Sigma & Audit Efficiency Bar -->
     <div class="row cols-3" style="margin-top:16px">
       <div class="card kpi">
-        <div class="label">Inference Efficiency</div>
+        <div class="label">Inference Yield</div>
         <div class="value big" style="color:var(--good)">${tokensPerWh} <span style="font-size:14px;font-weight:400;color:var(--muted)">tok/Wh</span></div>
         <div class="sub">Useful output work per unit electricity</div>
       </div>
@@ -157,7 +271,7 @@ export default async function (root) {
     <!-- Charts Row -->
     <div class="row cols-2" style="margin-top:16px">
       <div class="card">
-        <h3>Daily Energy Consumption</h3>
+        <h3>Daily Electrical Energy</h3>
         <p class="muted" style="margin:-4px 0 10px;font-size:12px">Daily electrical energy consumed by Claude Code turns in Watt-hours (Wh).</p>
         <div id="ch-daily-energy" style="height:270px"></div>
       </div>
@@ -214,55 +328,18 @@ export default async function (root) {
       </div>
     </div>
 
-    <!-- Per-Model Detailed Table -->
-    <div class="card" style="margin-top:16px">
-      <h3>Environmental Impact by Model</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Model</th>
-            <th class="num">Turns</th>
-            <th class="num">Output Tokens</th>
-            <th class="num">Energy (Wh)</th>
-            <th class="num">Carbon (gCO₂eq)</th>
-            <th class="num">Water (mL)</th>
-            <th class="num">PE (MJ)</th>
-            <th class="num">Share</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${models.map(m => {
-            const mEnergyWh = (m.energy_kwh || 0) * 1000.0;
-            const mGwpG = (m.gwp_kgco2eq || 0) * 1000.0;
-            const mWcfMl = (m.wcf_l || 0) * 1000.0;
-            const share = totalGwpG > 0 ? ((mGwpG / totalGwpG) * 100).toFixed(1) + '%' : '0%';
-            return `
-              <tr>
-                <td><span class="badge ${fmt.modelClass(m.model)}">${fmt.htmlSafe(m.model)}</span></td>
-                <td class="num">${fmt.int(m.turns)}</td>
-                <td class="num">${fmt.compact(m.output_tokens)}</td>
-                <td class="num">${mEnergyWh.toFixed(2)}</td>
-                <td class="num">${mGwpG.toFixed(2)}</td>
-                <td class="num">${mWcfMl.toFixed(1)}</td>
-                <td class="num">${(m.pe_mj || 0).toFixed(3)}</td>
-                <td class="num">${share}</td>
-              </tr>
-            `;
-          }).join('') || '<tr><td colspan="8" class="muted">No environmental records in this range</td></tr>'}
-        </tbody>
-      </table>
-    </div>
-
     <!-- Methodology & LCA Audit Accordion -->
     <details class="card glossary" style="margin-top:16px">
       <summary><h3 style="display:inline-block;margin:0">Audit Methodology & LCA Impact Criteria</h3><span class="muted" style="font-size:12px">— click to expand</span></summary>
       <dl>
+        <dt>Thermodynamic Efficiency η</dt><dd>Ratio of useful computational work to total electrical energy input: η = W_useful / E_in. Prefill and decode have distinct physical energy profiles.</dd>
+        <dt>Useful Work W_useful</dt><dd>W_useful = Q × E_out. Decode energy gated by quality factor Q(alpha, rho), penalizing hallucinations, padding, and low relevance.</dd>
+        <dt>Thermodynamic Waste</dt><dd>Energy consumed minus useful work yield (Waste = E_in - W_useful). Measures prefill overhead and unutilized inference energy.</dd>
         <dt>Energy (kWh)</dt><dd>Direct electricity consumption of datacenter GPU inference, server components, and Power Usage Effectiveness (PUE) overhead.</dd>
         <dt>GWP (kgCO₂eq)</dt><dd>Global Warming Potential based on Life Cycle Assessment (LCA). Includes operational electricity emissions (80%) + embodied hardware manufacturing emissions (20%).</dd>
         <dt>Water (WCF)</dt><dd>Water Consumption Footprint (litres) from evaporative datacenter cooling towers and thermoelectric power plant cooling.</dd>
         <dt>ADPe (kgSbeq)</dt><dd>Abiotic Depletion Potential of mineral and metal elements (copper, lithium, gold, silicon) used in server hardware manufacturing.</dd>
         <dt>Primary Energy (MJ)</dt><dd>Total primary energy extracted from nature before power conversion and transmission losses (approx. 3:1 primary-to-delivered energy ratio).</dd>
-        <dt>Lean Six Sigma Metric</dt><dd>Useful Work Efficiency = Output tokens / Energy Input (Wh). Measures the productive yield of computational inference.</dd>
       </dl>
     </details>
   `;
@@ -272,21 +349,53 @@ export default async function (root) {
     btn.addEventListener('click', () => writeRange(btn.dataset.range));
   });
 
-  // Chart 1: Daily Energy
-  stackedBarChart(document.getElementById('ch-daily-energy'), {
-    categories: daily.map(d => d.day),
-    series: [
-      { name: 'Energy (Wh)', values: daily.map(d => (d.energy_kwh || 0) * 1000.0), color: '#4A9EFF' },
-    ],
-    formatter: v => Number(v).toFixed(2) + ' Wh',
-  });
+  // Chart: Daily Useful Work vs Waste
+  const wasteEl = document.getElementById('ch-daily-waste');
+  if (wasteEl && effDaily.length > 0) {
+    stackedBarChart(wasteEl, {
+      categories: effDaily.map(d => d.day),
+      series: [
+        { name: 'Useful Work (J)', values: effDaily.map(d => d.sum_w_useful_j || 0), color: '#3FB68B' },
+        { name: 'Waste (J)', values: effDaily.map(d => d.sum_waste_j || 0), color: '#E5484D' },
+      ],
+      formatter: v => Number(v).toFixed(4) + ' J',
+    });
+  }
 
-  // Chart 2: Model Carbon Share Donut
-  donutChart(
-    document.getElementById('ch-model-carbon'),
-    models.map(m => ({
-      name: fmt.modelShort(m.model) || 'unknown',
-      value: Math.round((m.gwp_kgco2eq || 0) * 100000) / 100, // in grams
-    })).filter(d => d.value > 0),
-  );
+  // Chart: Efficiency by Model (bar chart)
+  const etaEl = document.getElementById('ch-model-eta');
+  if (etaEl && effModels.length > 0) {
+    barChart(etaEl, {
+      categories: effModels.map(m => fmt.modelShort(m.model) || m.model),
+      values: effModels.map(m => {
+        const v = m.avg_eta_adjusted !== null ? m.avg_eta_adjusted : (m.avg_eta_unadjusted !== null ? m.avg_eta_unadjusted : 0);
+        return Math.round(v * 1000) / 10;
+      }),
+      color: '#4A9EFF',
+    });
+  }
+
+  // Chart: Daily Energy
+  const dailyEl = document.getElementById('ch-daily-energy');
+  if (dailyEl && daily.length > 0) {
+    stackedBarChart(dailyEl, {
+      categories: daily.map(d => d.day),
+      series: [
+        { name: 'Energy (Wh)', values: daily.map(d => (d.energy_kwh || 0) * 1000.0), color: '#4A9EFF' },
+      ],
+      formatter: v => Number(v).toFixed(2) + ' Wh',
+    });
+  }
+
+  // Chart: Model Carbon Share Donut
+  const carbonEl = document.getElementById('ch-model-carbon');
+  if (carbonEl && models.length > 0) {
+    donutChart(
+      carbonEl,
+      models.map(m => ({
+        name: fmt.modelShort(m.model) || 'unknown',
+        value: Math.round((m.gwp_kgco2eq || 0) * 100000) / 100,
+      })).filter(d => d.value > 0),
+    );
+  }
 }
