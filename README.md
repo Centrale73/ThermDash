@@ -4,9 +4,6 @@
 
 Think of it as a **thermal audit trail for your AI workflows** — where thermodynamics meets token accounting.
 
-![Dashboard overview — top](docs/images/dashboard-overview-top.jpg)
-![Dashboard overview — bottom](docs/images/dashboard-overview-bottom.jpg)
-
 ## Why
 
 Every AI request has a physical footprint: energy in, heat out, dollars spent, and a quality score you can actually use. Most tools stop at token counts or API bills. ThermDash goes further up the ladder — from raw chat logs to a thermodynamic view of your AI usage — so you can see **what you spent, what it cost, and what you got** in one place.
