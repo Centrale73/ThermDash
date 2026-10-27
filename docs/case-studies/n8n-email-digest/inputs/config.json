@@ -1,0 +1,71 @@
+{
+ "workflow": "digest_workflow.json",
+ "jurisdiction": "gdpr",
+ "year": 2026,
+ "inference_node": "Riassumi con AI",
+ "model": "gpt-4o-mini",
+ "item_samples_file": "synthetic_inbox_items.json",
+ "items": {
+  "distribution": "poisson",
+  "mean": 12,
+  "cap": 25,
+  "_note": "ASSUMPTION: unread non-promo emails per 24 h for a small Italian business owner; sensitivity at 3 and 30 run separately."
+ },
+ "output_model": {
+  "calibration_text": {
+   "fixed": "🔴 URGENTI (rispondere oggi):\n\n🟡 IMPORTANTI (questa settimana):\n\n⚪ IL RESTO:\n- Notifiche, newsletter, conferme di consegna e promemoria amministrativi senza azione richiesta.",
+   "item_lines": [
+    "- Lorenzo Gatti: modello sbagliato, sostituzione entro giovedì per apertura",
+    "- Sara Greco: cliente arrabbiata, prodotto difettoso, vuole soluzione oggi",
+    "- Matteo Barbieri: checkout PayPal in errore, ordini persi",
+    "- Stripe: contestazione 89 euro, rispondere entro 7 giorni",
+    "- Giulia Ferri: preventivo 200 pezzi entro venerdì, opportunità",
+    "- Roberto Marino: fattura 0932 non saldata da 60 giorni",
+    "- Fatture in Cloud: fattura 128 scartata, correggere codice destinatario",
+    "- Francesca De Luca: rivedere provvigione ed esclusiva, call domani",
+    "- Davide Fontana: buyer ferramenta chiede catalogo B2B",
+    "- Simona Rinaldi: lista personale fiera entro lunedì"
+   ]
+  },
+  "item_fraction_listed": 0.45,
+  "_note": "Fraction of items given an individual line (rest collapsed into IL RESTO); illustrative."
+ },
+ "quality": {
+  "alpha": 0.85,
+  "rho": 0.9,
+  "w_a": 0.5,
+  "w_p": 0.5,
+  "_note": "ILLUSTRATIVE prior, not measured. alpha = triage accuracy, rho = format compliance."
+ },
+ "delivery": {
+  "p_success": 0.95,
+  "_note": "ILLUSTRATIVE; D = 0 while chatId is the placeholder INSERISCI-CHAT-ID."
+ },
+ "pricing": {
+  "input_per_m": 0.15,
+  "output_per_m": 0.6
+ },
+ "region": "us_east_virginia",
+ "region_overrides": {
+  "cavagna2026_llama31_8b_h100": "quebec_commercial_hydro"
+ },
+ "host": {
+  "power_w": 10,
+  "workflows_sharing": 1,
+  "_note": "ASSUMPTION: always-on mini-PC/VPS share running n8n; boundary-of-analysis term."
+ },
+ "energy_scenarios": [
+  "thermdash_energy_json",
+  "thermdash_benchmarks_json",
+  "thermdash_ecologits_fallback",
+  "jegham2025_topdown",
+  "cavagna2026_llama31_8b_h100"
+ ],
+ "headline_scenario": "jegham2025_topdown",
+ "monte_carlo": {
+  "n": 20000,
+  "seed": 7
+ },
+ "claimed_cost_per_run_usd": 0.01,
+ "_claim_note": "Sticky note: '~1 centesimo al giorno con gpt-4o-mini' (EUR 0.01/day, one run/day); EUR~USD within ~15%, immaterial to the ratio."
+}

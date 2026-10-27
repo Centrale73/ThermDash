@@ -10,13 +10,14 @@ Inspired by [phuryn/claude-usage](https://github.com/phuryn/claude-usage) but di
 
 ## Status
 
-Working codebase. 68 Python unit tests (`python3 -m unittest discover tests`). Seven UI tabs wired up (Overview, Prompts, Sessions, Projects, Skills, Tips, Settings). Runs on macOS, Windows, and Linux.
+Working codebase. 160 Python unit tests (16 for `n8n_audit`) (`python3 -m unittest discover tests`). Seven UI tabs wired up (Overview, Prompts, Sessions, Projects, Skills, Tips, Settings). Runs on macOS, Windows, and Linux.
 
 ## Architecture
 
 - `cli.py` → `token_dashboard/scanner.py` → `~/.claude/token-dashboard.db` (SQLite)
 - `token_dashboard/server.py` exposes JSON APIs (`/api/*`) + SSE stream (`/api/stream`) + static frontend (`web/`)
 - `web/` is vanilla JS, no build step — hash router + ECharts
+- `token_dashboard/n8n_audit/` is standalone (no DB): `graph` → `scan`/`schedule` → `engine` (reuses `thermodynamics`, `quality_scores`, `heat`) → `report`; CLI `cli.py n8n-audit inspect|run`
 
 ## Data source
 

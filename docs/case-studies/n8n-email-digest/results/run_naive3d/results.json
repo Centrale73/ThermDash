@@ -1,0 +1,406 @@
+{
+  "workflow": "03 - Rassegna email mattutina con AI",
+  "inference_node": "Riassumi con AI",
+  "model": "gpt-4o-mini",
+  "tokenizer": "tiktoken o200k_base",
+  "static_prompt_tokens": 146,
+  "item_tokens": {
+    "mean": 56.775,
+    "min": 41,
+    "max": 80,
+    "n_samples": 40
+  },
+  "output_model": {
+    "item_fraction_listed": 0.45,
+    "_note": "Fraction of items given an individual line (rest collapsed into IL RESTO); illustrative.",
+    "fixed_tokens": 50,
+    "per_item_tokens": 17.2
+  },
+  "items": {
+    "distribution": "poisson",
+    "mean": 12,
+    "cap": 25,
+    "_note": "ASSUMPTION: unread non-promo emails per 24 h for a small Italian business owner; sensitivity at 3 and 30 run separately.",
+    "redundancy": 2.138
+  },
+  "runs_per_year": 261,
+  "schedule_basis": "cron '0 8 * * 1-5' enumerated over 2026",
+  "p_inference_per_run": 1.0,
+  "tokens": {
+    "n_in": {
+      "mean": 1472.35285,
+      "p5": 1150,
+      "p95": 1624
+    },
+    "n_out": {
+      "mean": 230.4999,
+      "p5": 153,
+      "p95": 308
+    }
+  },
+  "coverage": {
+    "temporal": {
+      "query": "is:unread newer_than:1d -category:promotions -category:social",
+      "lookback_h": 24.0,
+      "uniform": 0.7129798903107861,
+      "business_hours": 0.7969348659003831,
+      "uncovered_hours_per_year": 2512.0,
+      "redundancy": 1.0
+    },
+    "count_cap_loss": 0.09235950072370162
+  },
+  "quality": {
+    "Q": 0.875,
+    "quality_adjusted": true,
+    "alpha": 0.85,
+    "rho": 0.9,
+    "w_a": 0.5,
+    "w_p": 0.5,
+    "_note": "ILLUSTRATIVE prior, not measured. alpha = triage accuracy, rho = format compliance."
+  },
+  "delivery_p_success": 0.95,
+  "cost_usd": {
+    "per_inference": 0.0003591528675,
+    "per_year": 0.09373889841750001,
+    "claimed_per_run": 0.01,
+    "claim_overstatement_x": 27.843297116373435
+  },
+  "scenarios": {
+    "thermdash_energy_json": {
+      "label": "ThermDash energy.json (gpt-4o-mini)",
+      "short_label": "TD energy.json",
+      "tier": "C",
+      "form": "linear",
+      "hardware": "H100 (as declared)",
+      "provenance": "ThermDash/energy.json, entry gpt-4o-mini, measured:false, source tag luccioni2024 (https://arxiv.org/abs/2311.16863). Value not traceable to a table in that paper.",
+      "region": "US East (Northern Virginia)",
+      "E_in_J": {
+        "mean": 0.0162619069,
+        "p5": 0.012095999999999999,
+        "p95": 0.020056
+      },
+      "E_out_J_mean": 0.0103724955,
+      "eta_max_Q1": 0.6378400493732995,
+      "eta_model": 0.558110043201637,
+      "eta_system_delivered": 0.5306116709935168,
+      "waste_J_per_inference": 0.00763314930625,
+      "annual": {
+        "server_kWh": 1.17898825025e-06,
+        "facility_kWh": 1.4737353128125e-06,
+        "heat_rejected_MJ": 5.305447126125e-06,
+        "heat_dollars_usd": 1.252675015890625e-07,
+        "co2_g": 0.00056001941886875
+      },
+      "J_per_useful_item": 0.0017929998189560698,
+      "boundary": {
+        "host_kWh_per_year": 87.6,
+        "llm_share_of_boundary": 1.6823462191999654e-08,
+        "eta_boundary": 8.92672538559319e-09
+      }
+    },
+    "thermdash_benchmarks_json": {
+      "label": "ThermDash energy_benchmarks.json (gpt-4o-mini)",
+      "short_label": "TD energy_benchmarks.json",
+      "tier": "C",
+      "form": "linear",
+      "hardware": "NVIDIA L40S (as declared)",
+      "provenance": "ThermDash/token_dashboard/data/energy_benchmarks.json cites arXiv:2407.21783, which is 'The Llama 3 Herd of Models' (https://arxiv.org/abs/2407.21783) and reports no GPT-4o-mini energy.",
+      "region": "US East (Northern Virginia)",
+      "E_in_J": {
+        "mean": 6.65808688,
+        "p5": 5.1522,
+        "p95": 7.7476
+      },
+      "E_out_J_mean": 2.5354989,
+      "eta_max_Q1": 0.38081493163093116,
+      "eta_model": 0.3332130651770648,
+      "eta_system_delivered": 0.3167954840880658,
+      "waste_J_per_inference": 4.54883502375,
+      "annual": {
+        "server_kWh": 0.0004827112988,
+        "facility_kWh": 0.0006033891235,
+        "heat_rejected_MJ": 0.0021722008446,
+        "heat_dollars_usd": 5.12880754975e-05,
+        "co2_g": 0.22928786693
+      },
+      "J_per_useful_item": 0.7341050864356985,
+      "boundary": {
+        "host_kWh_per_year": 87.6,
+        "llm_share_of_boundary": 6.887956248654298e-06,
+        "eta_boundary": 2.1820734341698557e-06
+      }
+    },
+    "thermdash_ecologits_fallback": {
+      "label": "ThermDash ecologits_bridge default rate",
+      "short_label": "TD ecologits default",
+      "tier": "C",
+      "form": "linear",
+      "hardware": "unspecified",
+      "provenance": "ThermDash/token_dashboard/ecologits_bridge.py ENERGY_RATES['default'] = (0.0008, 0.0030) kWh per 1k tokens; gpt-4o-mini falls through to 'default'. No citation.",
+      "region": "US East (Northern Virginia)",
+      "E_in_J": {
+        "mean": 6729.775128,
+        "p5": 5214.24,
+        "p95": 7813.4400000000005
+      },
+      "E_out_J_mean": 2489.39892,
+      "eta_max_Q1": 0.3699081875176736,
+      "eta_model": 0.32366966407796444,
+      "eta_system_delivered": 0.30772229132646295,
+      "waste_J_per_inference": 4658.873305499999,
+      "annual": {
+        "server_kWh": 0.48790869678,
+        "facility_kWh": 0.609885870975,
+        "heat_rejected_MJ": 2.19558913551,
+        "heat_dollars_usd": 0.05184029903287501,
+        "co2_g": 231.7566309705
+      },
+      "J_per_useful_item": 742.009264984727,
+      "boundary": {
+        "host_kWh_per_year": 87.6,
+        "llm_share_of_boundary": 0.006914030836261174,
+        "eta_boundary": 0.0021276014112361096
+      }
+    },
+    "jegham2025_topdown": {
+      "label": "Jegham et al. 2025 top-down fit (GPT-4o mini, DGX A100)",
+      "short_label": "Jegham 2025, GPT-4o mini",
+      "tier": "B",
+      "form": "linear",
+      "hardware": "DGX A100 (inferred by the authors)",
+      "provenance": "Exact 3-point linear fit E = a*n_in + b*n_out + c to the GPT-4o mini row of 'How Hungry is AI?' (https://arxiv.org/html/2505.09598); values include PUE 1.12, divided out before use.",
+      "region": "US East (Northern Virginia)",
+      "E_in_J": {
+        "mean": 1578.5140824642856,
+        "p5": 1108.5007142857141,
+        "p95": 2045.9764285714284
+      },
+      "E_out_J_mean": 1367.6876209285713,
+      "eta_max_Q1": 0.8664399235472235,
+      "eta_model": 0.7581349331038206,
+      "eta_system_delivered": 0.72078123049909,
+      "waste_J_per_inference": 440.7507597455358,
+      "annual": {
+        "server_kWh": 0.1144422709786607,
+        "facility_kWh": 0.1430528387233259,
+        "heat_rejected_MJ": 0.5149902194039732,
+        "heat_dollars_usd": 0.0121594912914827,
+        "co2_g": 54.36007871486384
+      },
+      "J_per_useful_item": 174.04327066206918,
+      "boundary": {
+        "host_kWh_per_year": 87.6,
+        "llm_share_of_boundary": 0.0016303608558761351,
+        "eta_boundary": 0.00117513350385595
+      }
+    },
+    "cavagna2026_llama31_8b_h100": {
+      "label": "Cavagna et al. 2026 theta-model (Llama 3.1 8B, H100, batched TensorRT-LLM)",
+      "short_label": "Cavagna 2026, Llama-3.1-8B\n(local counterfactual)",
+      "tier": "A",
+      "form": "theta",
+      "hardware": "NVIDIA H100, single GPU, in-flight batching (max_batch_size 1024)",
+      "provenance": "Memory-and-FLOPs fitted parameters, 'Determining Energy Efficiency Sweet Spots in Production LLM Inference' (https://arxiv.org/html/2602.05695v1). Applies to a batched datacentre deployment, not a batch-1 home GPU.",
+      "region": "Hydro-Québec Commercial",
+      "E_in_J": {
+        "mean": 42.52824426599277,
+        "p5": 30.6580902118566,
+        "p95": 51.334790753195605
+      },
+      "E_out_J_mean": 18.054850293223982,
+      "eta_max_Q1": 0.4245378713567383,
+      "eta_model": 0.37147063743714603,
+      "eta_system_delivered": 0.35324537756545527,
+      "waste_J_per_inference": 27.505338563056245,
+      "annual": {
+        "server_kWh": 0.003083297709284476,
+        "facility_kWh": 0.003545792365677147,
+        "heat_rejected_MJ": 0.01276485251643773,
+        "heat_dollars_usd": 0.00019501858011224308,
+        "co2_g": 0.00602784702165115
+      },
+      "J_per_useful_item": 4.689064741198619,
+      "boundary": {
+        "host_kWh_per_year": 87.6,
+        "llm_share_of_boundary": 4.047544347213112e-05,
+        "eta_boundary": 1.42977633114422e-05
+      }
+    }
+  },
+  "audit": {
+    "name": "03 - Rassegna email mattutina con AI",
+    "node_count": 6,
+    "inference_sites": [
+      {
+        "node": "Riassumi con AI",
+        "model_node": [
+          "Riassumi con AI"
+        ],
+        "model": "gpt-4o-mini",
+        "resource": "text",
+        "prompts": [
+          {
+            "role": "system",
+            "content": "Sei l'assistente di un imprenditore italiano. Ricevi l'elenco delle email non lette e produci una rassegna mattutina in italiano, breve e pratica, in questo formato:\n\n🔴 URGENTI (rispondere oggi):\n- [mittente]: [cosa vuole in max 10 parole]\n\n🟡 IMPORTANTI (questa settimana):\n- ...\n\n⚪ IL RESTO:\n- una riga sola che raggruppa il resto\n\nSii sintetico. Se qualcosa sembra un cliente arrabbiato o un'opportunità di vendita, segnalalo per primo."
+          },
+          {
+            "role": "user",
+            "content": "=Ecco le {{ $json.totale }} email non lette:\n\n{{ $json.testoEmail }}"
+          }
+        ],
+        "guarded_by_if": true
+      }
+    ],
+    "schedule": {
+      "triggers": [
+        {
+          "name": "Ogni mattina alle 8 (lun-ven)",
+          "type": "scheduleTrigger"
+        }
+      ],
+      "runs_per_year": 261,
+      "basis": "cron '0 8 * * 1-5' enumerated over 2026",
+      "cron": "0 8 * * 1-5"
+    },
+    "coverage": {
+      "query": "is:unread newer_than:1d -category:promotions -category:social",
+      "lookback_h": 24.0,
+      "uniform": 0.7129798903107861,
+      "business_hours": 0.7969348659003831,
+      "uncovered_hours_per_year": 2512.0,
+      "redundancy": 1.0
+    },
+    "input_shaping": [
+      {
+        "node": "Prendi email non lette",
+        "item_cap": 25,
+        "query": "is:unread newer_than:1d -category:promotions -category:social"
+      },
+      {
+        "node": "Prepara testo per AI",
+        "char_cap_per_field": 200
+      }
+    ],
+    "flags": {
+      "red": [
+        "No error trigger / errorWorkflow: failures after inference are silent and their energy is unaccounted. [GDPR Arts. 5(2) and 32: accountability and processing integrity (no error path)]",
+        "Personal data (sender names, message text) reaches cloud model 'Riassumi con AI' (openai). [GDPR Chapter V (Arts. 44-49): transfer of personal data to third countries needs a transfer mechanism]",
+        "Unconfigured placeholder in 'Invia rassegna su Telegram' (INSERISCI): delivery gate D = 0 until set."
+      ],
+      "yellow": [
+        "'Invia rassegna su Telegram' uses legacy Telegram Markdown on LLM text: an unescaped '_', '*', '`' or '[' rejects the whole message (D < 1).",
+        "Look-back 'is:unread newer_than:1d -category:promotions -category:social' with cron '0 8 * * 1-5' leaves 2512 h/yr unread by the workflow (K = 71.3% uniform, 79.7% business hours). Fix with an 'after:' last-run timestamp, not a wider newer_than.",
+        "Single AI vendor, no fallback model: one outage = zero useful work."
+      ],
+      "green": [],
+      "energy": []
+    },
+    "mermaid": "graph LR\n  classDef cloud fill:#fdecea,stroke:#c62828,color:#5d0f0f\n  classDef ai fill:#fff4e5,stroke:#e65100,stroke-width:3px,color:#4a2600\n  classDef local fill:#e8f5e9,stroke:#2e7d32,color:#0b3d12\n  N0[\"Ogni mattina alle 8 (lun-ven)\"]:::local\n  N1[\"Prendi email non lette\"]:::cloud\n  N2[\"Prepara testo per AI\"]:::local\n  N3[\"Ci sono email?\"]:::local\n  N4[\"Riassumi con AI [E_in]\"]:::ai\n  N5[\"Invia rassegna su Telegram\"]:::cloud\n  N0 -->|main| N1\n  N1 -->|main| N2\n  N2 -->|main| N3\n  N3 -->|main| N4\n  N4 -->|main| N5"
+  },
+  "headline_scenario": "jegham2025_topdown",
+  "sensitivity": {
+    "scenario": "jegham2025_topdown",
+    "grid": [
+      {
+        "Q": 1.0,
+        "D": 1.0,
+        "eta": 0.8664399235472235
+      },
+      {
+        "Q": 1.0,
+        "D": 0.95,
+        "eta": 0.8231179273698623
+      },
+      {
+        "Q": 1.0,
+        "D": 0.8,
+        "eta": 0.6931519388377789
+      },
+      {
+        "Q": 1.0,
+        "D": 0.0,
+        "eta": 0.0
+      },
+      {
+        "Q": 0.9,
+        "D": 1.0,
+        "eta": 0.7797959311925012
+      },
+      {
+        "Q": 0.9,
+        "D": 0.95,
+        "eta": 0.7408061346328761
+      },
+      {
+        "Q": 0.9,
+        "D": 0.8,
+        "eta": 0.623836744954001
+      },
+      {
+        "Q": 0.9,
+        "D": 0.0,
+        "eta": 0.0
+      },
+      {
+        "Q": 0.75,
+        "D": 1.0,
+        "eta": 0.6498299426604177
+      },
+      {
+        "Q": 0.75,
+        "D": 0.95,
+        "eta": 0.6173384455273968
+      },
+      {
+        "Q": 0.75,
+        "D": 0.8,
+        "eta": 0.5198639541283342
+      },
+      {
+        "Q": 0.75,
+        "D": 0.0,
+        "eta": 0.0
+      },
+      {
+        "Q": 0.5,
+        "D": 1.0,
+        "eta": 0.4332199617736118
+      },
+      {
+        "Q": 0.5,
+        "D": 0.95,
+        "eta": 0.41155896368493117
+      },
+      {
+        "Q": 0.5,
+        "D": 0.8,
+        "eta": 0.34657596941888946
+      },
+      {
+        "Q": 0.5,
+        "D": 0.0,
+        "eta": 0.0
+      },
+      {
+        "Q": 0.25,
+        "D": 1.0,
+        "eta": 0.2166099808868059
+      },
+      {
+        "Q": 0.25,
+        "D": 0.95,
+        "eta": 0.20577948184246558
+      },
+      {
+        "Q": 0.25,
+        "D": 0.8,
+        "eta": 0.17328798470944473
+      },
+      {
+        "Q": 0.25,
+        "D": 0.0,
+        "eta": 0.0
+      }
+    ]
+  }
+}

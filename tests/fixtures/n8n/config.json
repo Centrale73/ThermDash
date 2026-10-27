@@ -1,0 +1,36 @@
+{
+ "workflow": "digest_min.json",
+ "year": 2026,
+ "jurisdiction": "gdpr",
+ "inference_node": "Summarise",
+ "item_samples_file": "items.json",
+ "items": {
+  "mean": 12,
+  "cap": 25
+ },
+ "output_model": {
+  "fixed_tokens": 40,
+  "per_item_tokens": 15,
+  "item_fraction_listed": 0.5
+ },
+ "quality": {
+  "alpha": 0.8,
+  "rho": 0.9
+ },
+ "delivery": {
+  "p_success": 0.9
+ },
+ "region": "us_east_virginia",
+ "host": {
+  "power_w": 10
+ },
+ "energy_scenarios": [
+  "jegham2025_topdown",
+  "cavagna2026_llama31_8b_h100"
+ ],
+ "headline_scenario": "jegham2025_topdown",
+ "monte_carlo": {
+  "n": 2000,
+  "seed": 1
+ }
+}

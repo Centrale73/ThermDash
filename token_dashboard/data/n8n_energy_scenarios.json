@@ -1,0 +1,119 @@
+{
+ "version": "1.0.0",
+ "units": "Joules per token (linear form) or Joules per request (theta form). Server-side (IT) energy unless pue_included > 1.",
+ "tiers": {
+  "A": "Measured on hardware and published, but possibly for a different model than the audited one (use as counterfactual or proxy).",
+  "B": "Published top-down estimate for the audited model; methodology assumptions dominate.",
+  "C": "Unverified constant shipped in ThermDash; provenance missing or citation does not contain the value. Report, never headline."
+ },
+ "scenarios": {
+  "thermdash_energy_json": {
+   "label": "ThermDash energy.json (gpt-4o-mini)",
+   "applies_to": [
+    "gpt-4o-mini"
+   ],
+   "form": "linear",
+   "e_prefill": 4e-06,
+   "e_decode": 4.5e-05,
+   "c": 0.0,
+   "kappa": 1.0,
+   "pue_included": 1.0,
+   "hardware": "H100 (as declared)",
+   "tier": "C",
+   "provenance": "ThermDash/energy.json, entry gpt-4o-mini, measured:false, source tag luccioni2024 (https://arxiv.org/abs/2311.16863). Value not traceable to a table in that paper.",
+   "short_label": "TD energy.json"
+  },
+  "thermdash_benchmarks_json": {
+   "label": "ThermDash energy_benchmarks.json (gpt-4o-mini)",
+   "applies_to": [
+    "gpt-4o-mini"
+   ],
+   "form": "linear",
+   "e_prefill": 0.0028,
+   "e_decode": 0.011,
+   "c": 0.0,
+   "kappa": 1.0,
+   "pue_included": 1.0,
+   "hardware": "NVIDIA L40S (as declared)",
+   "tier": "C",
+   "provenance": "ThermDash/token_dashboard/data/energy_benchmarks.json cites arXiv:2407.21783, which is 'The Llama 3 Herd of Models' (https://arxiv.org/abs/2407.21783) and reports no GPT-4o-mini energy.",
+   "short_label": "TD energy_benchmarks.json"
+  },
+  "thermdash_ecologits_fallback": {
+   "label": "ThermDash ecologits_bridge default rate",
+   "applies_to": [
+    "*"
+   ],
+   "form": "linear",
+   "e_prefill": 2.88,
+   "e_decode": 10.8,
+   "c": 0.0,
+   "kappa": 1.0,
+   "pue_included": 1.0,
+   "hardware": "unspecified",
+   "tier": "C",
+   "provenance": "ThermDash/token_dashboard/ecologits_bridge.py ENERGY_RATES['default'] = (0.0008, 0.0030) kWh per 1k tokens; gpt-4o-mini falls through to 'default'. No citation.",
+   "short_label": "TD ecologits default"
+  },
+  "jegham2025_topdown": {
+   "label": "Jegham et al. 2025 top-down fit (GPT-4o mini, DGX A100)",
+   "applies_to": [
+    "gpt-4o-mini"
+   ],
+   "form": "linear",
+   "e_prefill": 0.1112,
+   "e_decode": 6.6456,
+   "c": 72.4,
+   "kappa": 1.0,
+   "pue_included": 1.12,
+   "hardware": "DGX A100 (inferred by the authors)",
+   "tier": "B",
+   "fit_points_wh": {
+    "100in_300out": 0.577,
+    "1000in_1000out": 1.897,
+    "10000in_1500out": 3.098
+   },
+   "provenance": "Exact 3-point linear fit E = a*n_in + b*n_out + c to the GPT-4o mini row of 'How Hungry is AI?' (https://arxiv.org/html/2505.09598); values include PUE 1.12, divided out before use.",
+   "short_label": "Jegham 2025, GPT-4o mini"
+  },
+  "cavagna2026_llama31_8b_h100": {
+   "label": "Cavagna et al. 2026 theta-model (Llama 3.1 8B, H100, batched TensorRT-LLM)",
+   "applies_to": [
+    "llama-3.1-8b",
+    "local-8b-counterfactual"
+   ],
+   "form": "theta",
+   "theta": [
+    0.01970934,
+    3.329326e-07,
+    3.583505e-05,
+    0.01551942,
+    2.249613e-05,
+    0.8939092
+   ],
+   "theta_terms": "E_tot = t0*n_out + t1*n_in^2 + t2*n_in*n_out + t3*n_in + t4*n_out^2 + t5",
+   "kappa": 1.0,
+   "pue_included": 1.0,
+   "hardware": "NVIDIA H100, single GPU, in-flight batching (max_batch_size 1024)",
+   "valid_range": "n_in, n_out in [64, 4096]",
+   "tier": "A",
+   "provenance": "Memory-and-FLOPs fitted parameters, 'Determining Energy Efficiency Sweet Spots in Production LLM Inference' (https://arxiv.org/html/2602.05695v1). Applies to a batched datacentre deployment, not a batch-1 home GPU.",
+   "short_label": "Cavagna 2026, Llama-3.1-8B\n(local counterfactual)"
+  },
+  "caravaca2025_opt30b_a100": {
+   "label": "Caravaca et al. 2025 marginal rates (OPT-30B, A100)",
+   "applies_to": [
+    "reference-only"
+   ],
+   "form": "linear",
+   "e_prefill": 0.29835,
+   "e_decode": 1.28835,
+   "c": 0.0,
+   "kappa": 1.0,
+   "pue_included": 1.0,
+   "hardware": "NVIDIA A100 80GB",
+   "tier": "A",
+   "provenance": "Marginal rates derived from P1/P2/P3 per-prompt Wh in 'From Prompts to Power' (https://arxiv.org/html/2511.05597): (P2-P1)/800 and (P3-P1)/800 tokens. Reference for decode/prefill ratio only."
+  }
+ }
+}

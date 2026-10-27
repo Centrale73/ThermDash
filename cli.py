@@ -168,6 +168,22 @@ def cmd_thermo_score(args):
     print(f"Recorded quality score for {args.message_id}: Q = {q_val:.4f} (alpha={args.alpha}, rho={args.rho}, method='{args.method}')")
 
 
+def cmd_n8n_audit(args):
+    """Thermal / energy efficiency audit of an exported n8n workflow (no DB needed)."""
+    import json
+    import sys
+    from token_dashboard.n8n_audit.io import do_inspect, do_run
+    from token_dashboard.n8n_audit.report import report_md
+
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if args.n8n_cmd == "inspect":
+        p = do_inspect(args.workflow, args.out, args.jurisdiction)
+        print(json.dumps({k: v for k, v in p["scan"].items() if k != "mermaid"}, indent=2, ensure_ascii=False))
+    else:
+        print(report_md(do_run(args.config, args.out_dir)))
+
+
 def cmd_dashboard(args):
     db = _db_path(args)
     init_db(db)
@@ -221,6 +237,18 @@ def main():
     score_p.add_argument("--w-a", type=float, default=0.5, help="Weight for alpha")
     score_p.add_argument("--w-p", type=float, default=0.5, help="Weight for rho")
     score_p.set_defaults(func=cmd_thermo_score)
+
+    n8n_p = sub.add_parser("n8n-audit", help="Thermal/energy efficiency audit of an n8n workflow JSON")
+    n8n_sub = n8n_p.add_subparsers(dest="n8n_cmd", required=True)
+    ins_p = n8n_sub.add_parser("inspect", help="Static scan + draft config")
+    ins_p.add_argument("workflow", help="Exported n8n workflow JSON")
+    ins_p.add_argument("--out", help="Write scan + draft config JSON here")
+    ins_p.add_argument("--jurisdiction", default="gdpr", choices=["gdpr", "law25"])
+    ins_p.set_defaults(func=cmd_n8n_audit)
+    run_p = n8n_sub.add_parser("run", help="Monte Carlo audit from a filled config")
+    run_p.add_argument("config", help="Config JSON (paths relative to this file)")
+    run_p.add_argument("--out-dir", default="n8n_audit_out")
+    run_p.set_defaults(func=cmd_n8n_audit)
 
     d = sub.add_parser("dashboard", parents=[common])
     d.add_argument("--no-scan", action="store_true")

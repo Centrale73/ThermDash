@@ -35,3 +35,10 @@ Both will fight over the SQLite file and you'll see inconsistent numbers and occ
 - **Strict aggregate separation:** To preserve audit integrity, quality-adjusted $\eta$ and non-adjusted $\eta$ are never silently averaged together into a single blended metric. They are tracked and reported as separate values alongside a mix ratio.
 - **Automatic backfill & rescans:** Upgrading an existing database backfills efficiency data for pre-existing assistant rows. If quality scores are added later, re-running `cli.py scan --recompute` or `cli.py thermo report --recompute` updates the records.
 
+
+## n8n workflow audit (`n8n-audit`)
+
+- **Constants disagree.** The three gpt-4o-mini constant sets in this repo differ by about 5.6 orders of magnitude: `energy.json` (4e-6 / 4.5e-5 J/tok), `data/energy_benchmarks.json` (0.0028 / 0.011 J/tok, citing arXiv:2407.21783, which contains no such data) and `ecologits_bridge.ENERGY_RATES['default']` (2.88 / 10.8 J/tok). `n8n-audit` labels all three tier C and never headlines them.
+- **Québec grid intensity.** `utility_rates.json` uses 1.7 g/kWh; `ecologits_bridge.GRID_GWP['QC']` uses 30 g/kWh.
+- **Rounding in `heat.calculate_heat_dollars()`.** It rounds to 6 decimals, so per-workflow annual heat-dollars below about $5e-7 read as $0, and small kWh values carry up to 13% error. `n8n-audit` computes heat terms directly from `load_utility_rates()`.
+- **Inputs are user-supplied.** Item volume, the quality prior and delivery probability are inputs, not measurements. The Cavagna θ-model is batched H100, so it is a lower bound for batch-1 self-hosted inference.

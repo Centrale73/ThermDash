@@ -1,0 +1,135 @@
+{
+ "name": "fixture - daily digest",
+ "nodes": [
+  {
+   "name": "Cron",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "cronExpression",
+       "expression": "0 8 * * 1-5"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "Fetch mail",
+   "type": "n8n-nodes-base.gmail",
+   "parameters": {
+    "operation": "getAll",
+    "returnAll": false,
+    "limit": 25,
+    "filters": {
+     "q": "is:unread newer_than:1d"
+    }
+   }
+  },
+  {
+   "name": "Render",
+   "type": "n8n-nodes-base.code",
+   "parameters": {
+    "jsCode": "return [{json:{t: items.map(i => i.json.snippet.slice(0, 200)).join('\\n')}}];"
+   }
+  },
+  {
+   "name": "Any?",
+   "type": "n8n-nodes-base.if",
+   "parameters": {}
+  },
+  {
+   "name": "Summarise",
+   "type": "@n8n/n8n-nodes-langchain.openAi",
+   "parameters": {
+    "modelId": {
+     "__rl": true,
+     "value": "gpt-4o-mini",
+     "mode": "list"
+    },
+    "messages": {
+     "values": [
+      {
+       "role": "system",
+       "content": "Summarise the inbox by urgency."
+      },
+      {
+       "content": "={{ $json.t }}"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "Send",
+   "type": "n8n-nodes-base.telegram",
+   "parameters": {
+    "chatId": "YOUR_CHAT_ID",
+    "text": "={{ $json.message.content }}",
+    "additionalFields": {
+     "parse_mode": "Markdown"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Cron": {
+   "main": [
+    [
+     {
+      "node": "Fetch mail",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Fetch mail": {
+   "main": [
+    [
+     {
+      "node": "Render",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Render": {
+   "main": [
+    [
+     {
+      "node": "Any?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Any?": {
+   "main": [
+    [
+     {
+      "node": "Summarise",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    []
+   ]
+  },
+  "Summarise": {
+   "main": [
+    [
+     {
+      "node": "Send",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "settings": {}
+}

@@ -91,6 +91,7 @@ python cli.py serve
 | `token_dashboard/skills.py` | Skill tracking |
 | `token_dashboard/chat.py` | Chat/session models |
 | `token_dashboard/server.py` | Local web server |
+| `token_dashboard/n8n_audit/` | n8n workflow thermal/energy audit (`cli.py n8n-audit`) |
 | `web/` | ECharts dashboard frontend |
 | `tests/` | Pytest test suite |
 
@@ -103,6 +104,27 @@ The first metrics ladder ships with three rungs:
 3. **Quality scores** — usefulness-weighted efficiency.
 
 See [`docs/specs/thermodynamic-efficiency-spec.md`](docs/specs/thermodynamic-efficiency-spec.md) for the full specification.
+
+## n8n Workflow Audit (`n8n-audit`)
+
+Audits one LLM node of an exported n8n workflow for energy, heat, CO2, cost and quality-adjusted efficiency. It merges the [ThermDash-AutoAudit](https://github.com/Centrale73/ThermDash-AutoAudit) graph scanner with this repo's `thermodynamics`, `quality_scores` and `heat` modules. No database is needed.
+
+```bash
+python3 cli.py n8n-audit inspect my_workflow.json --out draft.json --jurisdiction gdpr   # or law25
+# fill the draft config (item corpus, items/day, output calibration, Q prior, host power)
+python3 cli.py n8n-audit run config.json --out-dir audit_out    # results.json, report.md, figures
+```
+
+What it adds on top of `E_in`, `W_useful = Q*E_out` and `eta`:
+
+- A delivery gate `D`: a placeholder chat ID or a parse failure forces `D = 0`.
+- Coverage `K` from cron plus Gmail look-back. `K` is a service metric and never enters `eta`.
+- Window redundancy, which does cost energy.
+- An orchestration-host boundary.
+- Joules per useful item.
+- Five tiered energy-constant scenarios (`token_dashboard/data/n8n_energy_scenarios.json`).
+
+Method: [`docs/specs/n8n-thermaudit-method.md`](docs/specs/n8n-thermaudit-method.md). Worked example and article: [`docs/case-studies/n8n-email-digest/`](docs/case-studies/n8n-email-digest/article.md).
 
 ## Validation
 
@@ -118,6 +140,7 @@ pytest
 ## Documentation
 
 - [`docs/specs/thermodynamic-efficiency-spec.md`](docs/specs/thermodynamic-efficiency-spec.md) — thermodynamic efficiency specification
+- [`docs/specs/n8n-thermaudit-method.md`](docs/specs/n8n-thermaudit-method.md) — n8n audit method
 - [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) — known limitations
 - [`docs/inspiration.md`](docs/inspiration.md) — background and inspiration
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute
